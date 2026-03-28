@@ -14,7 +14,7 @@ class ApiService {
         data: {'subject': subject},
       );
       if (response.statusCode == 200) {
-        debugPrint('API Response (fetchSubjectData): ${response.data}');
+        // debugPrint('API Response (fetchSubjectData): ${response.data}');
         
         // The API wraps the graph in a 'prerequisite_data' field
         final graphData = response.data['prerequisite_data'];

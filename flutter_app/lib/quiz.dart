@@ -30,16 +30,70 @@ class _SubjectQuizState extends State<SubjectQuiz> {
   bool isAnswered = false;
   int score = 0;
 
+  final TextEditingController _textController = TextEditingController();
+  String? _textFeedback;
+
   @override
   void initState() {
     super.initState();
     _fetchQuizData();
   }
 
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
+
   Future<void> _fetchQuizData() async {
     setState(() {
       _isLoading = true;
     });
+    
+    // Using Dummy Data for UI testing
+    await Future.delayed(const Duration(seconds: 1)); // Simulate network delay
+    
+    final dummyData = QuizData(
+      section: "Testing Section",
+      questions: [
+        Question(
+          questionText: "What is the result of 2 + 2?",
+          options: ["3", "4", "5", "6"],
+          answerIndex: 1,
+          type: QuestionType.mcq,
+        ),
+        Question(
+          questionText: "Which keyword is used to define a class in Python?",
+          correctAnswer: "class",
+          type: QuestionType.text,
+          options: [],
+          answerIndex: 0,
+        ),
+        Question(
+          questionText: "What is the time complexity of searching in a Hash Map (average case)?",
+          code: "map.get(key);",
+          language: "java",
+          correctAnswer: "O(1)",
+          type: QuestionType.text,
+          options: [],
+          answerIndex: 0,
+        ),
+        Question(
+          questionText: "Which of these is a statically typed language?",
+          options: ["Python", "JavaScript", "Java", "Ruby"],
+          answerIndex: 2,
+          type: QuestionType.mcq,
+        ),
+      ],
+    );
+
+    setState(() {
+      _quizData = dummyData;
+      _isLoading = false;
+    });
+
+    /* 
+    // Original API call logic commented out for testing
     try {
       final data = await _apiService.fetchQuizData(widget.subjectId);
       setState(() {
@@ -59,6 +113,7 @@ class _SubjectQuizState extends State<SubjectQuiz> {
         _isLoading = false;
       });
     }
+    */
   }
 
   void _nextQuestion() {
@@ -70,6 +125,8 @@ class _SubjectQuizState extends State<SubjectQuiz> {
         currentIndex++;
         selectedIndex = null;
         isAnswered = false;
+        _textController.clear();
+        _textFeedback = null;
       });
     } else {
       final threshold = (_quizData!.questions.length * 0.7).ceil();
@@ -83,12 +140,31 @@ class _SubjectQuizState extends State<SubjectQuiz> {
     }
   }
 
+  void _submitTextAnswer(Question question) {
+    if (_textController.text.trim().isEmpty) return;
+
+    final userAnswer = _textController.text.trim().toLowerCase();
+    final correctAnswer = (question.correctAnswer ?? '').trim().toLowerCase();
+    
+    setState(() {
+      isAnswered = true;
+      if (userAnswer == correctAnswer) {
+        score++;
+        _textFeedback = "Correct!";
+      } else {
+        _textFeedback = "Incorrect. The correct answer is: ${question.correctAnswer}";
+      }
+    });
+  }
+
   void _resetQuiz() {
     setState(() {
       currentIndex = 0;
       score = 0;
       selectedIndex = null;
       isAnswered = false;
+      _textController.clear();
+      _textFeedback = null;
     });
   }
 
@@ -195,10 +271,13 @@ class _SubjectQuizState extends State<SubjectQuiz> {
 
                   const SizedBox(height: 25),
 
-                  ...List.generate(
-                    currentQuestion.options.length,
-                    (index) => _buildOptionTile(index, currentQuestion),
-                  ),
+                  if (currentQuestion.type == QuestionType.text)
+                    _buildTextInputField(currentQuestion)
+                  else
+                    ...List.generate(
+                      currentQuestion.options.length,
+                      (index) => _buildOptionTile(index, currentQuestion),
+                    ),
 
                   const SizedBox(height: 30),
 
@@ -228,6 +307,58 @@ class _SubjectQuizState extends State<SubjectQuiz> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTextInputField(Question question) {
+    final theme = Theme.of(context);
+    final isCorrect = _textFeedback?.startsWith("Correct") ?? false;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _textController,
+          enabled: !isAnswered,
+          decoration: InputDecoration(
+            hintText: "Type your answer here...",
+            filled: true,
+            fillColor: theme.colorScheme.surface,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+        if (!isAnswered) ...[
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () => _submitTextAnswer(question),
+              child: const Text("Submit Answer"),
+            ),
+          ),
+        ],
+        if (isAnswered && _textFeedback != null) ...[
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: isCorrect ? Colors.green.shade50 : Colors.red.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: isCorrect ? Colors.green : Colors.red),
+            ),
+            child: Text(
+              _textFeedback!,
+              style: TextStyle(
+                color: isCorrect ? Colors.green.shade900 : Colors.red.shade900,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 

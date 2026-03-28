@@ -60,12 +60,16 @@ class SubjectData {
 }
 
 // Quiz Models
+enum QuestionType { mcq, text }
+
 class Question {
   final String questionText;
   final String? code;
   final String? language;
   final List<String> options;
   final int answerIndex;
+  final String? correctAnswer; // For text-based questions
+  final QuestionType type;
 
   Question({
     required this.questionText,
@@ -73,15 +77,22 @@ class Question {
     this.language,
     required this.options,
     required this.answerIndex,
+    this.correctAnswer,
+    required this.type,
   });
 
   factory Question.fromJson(Map<String, dynamic> json) {
+    final typeStr = json['type']?.toString().toLowerCase();
+    final QuestionType type = typeStr == 'text' ? QuestionType.text : QuestionType.mcq;
+
     return Question(
       questionText: json['question'] ?? 'No Question',
       code: json['code'],
       language: json['language'],
       options: List<String>.from(json['options'] ?? []),
       answerIndex: json['answer'] ?? 0,
+      correctAnswer: json['correct_answer']?.toString(),
+      type: type,
     );
   }
 }
