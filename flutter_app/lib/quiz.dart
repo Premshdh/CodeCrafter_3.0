@@ -50,12 +50,12 @@ class QuizData {
   }
 }
 
-class SubjectQuizManual extends StatefulWidget {
+class SubjectQuiz extends StatefulWidget {
   final String subjectId;
   final String subjectName;
   final VoidCallback onComplete;
 
-  const SubjectQuizManual({
+  const SubjectQuiz({
     super.key,
     required this.subjectId,
     required this.subjectName,
@@ -63,10 +63,10 @@ class SubjectQuizManual extends StatefulWidget {
   });
 
   @override
-  State<SubjectQuizManual> createState() => _SubjectQuizManualState();
+  State<SubjectQuiz> createState() => _SubjectQuizState();
 }
 
-class _SubjectQuizManualState extends State<SubjectQuizManual> {
+class _SubjectQuizState extends State<SubjectQuiz> {
   final QuizData quizData = QuizData.fromJson({
     "section": "Computer Engineering Core",
     "questions": [
@@ -113,6 +113,7 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
   int? selectedIndex;
   bool isAnswered = false;
   int score = 0;
+  late final threshold = (quizData.questions.length * 0.7).ceil();
 
   void _nextQuestion() {
     final List<Question> questions = quizData.questions;
@@ -123,8 +124,8 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
         isAnswered = false;
       });
     } else {
-      // Threshold: 50% to pass
-      bool passed = score >= (questions.length / 2);
+      // Threshold: 70% to pass
+      bool passed = score >= threshold;
 
       if (passed) {
         widget.onComplete();
@@ -150,11 +151,11 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: Text(passed ? "Quiz Passed! 🎉" : "Quiz Failed ❌"),
+        title: Text(passed ? "Quiz Passed!" : "Quiz Failed"),
         content: Text(
           passed
               ? "Great job! You scored $score out of ${questions.length}. This subject is now marked as completed."
-              : "You scored $score out of ${questions.length}. You need at least ${(questions.length / 2).ceil()} correct to complete this subject.",
+              : "You scored $score out of ${questions.length}. You need at least $threshold questions correct to complete this subject.",
         ),
         actions: [
           // Always allow returning to the roadmap
@@ -312,11 +313,12 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
 
     Color color = theme.colorScheme.surface;
     if (isAnswered) {
-      if (isCorrect) {
-        color = Colors.green.shade50;
-      } else if (isSelected) {
-        color = Colors.red.shade50;
-      }
+      // if (isCorrect) {
+      //   color = Colors.green.shade50;
+      // } else if (isSelected) {
+      //   color = Colors.red.shade50;
+      // }
+      color = isCorrect ? Colors.green.shade50 : isSelected ?  Colors.red.shade50: theme.colorScheme.surface;
     }
 
     return GestureDetector(

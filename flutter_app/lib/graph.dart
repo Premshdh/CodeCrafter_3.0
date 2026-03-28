@@ -162,6 +162,65 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
     _transformationController.value = Matrix4.identity();
   }
 
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Learning Roadmap"),
+        // elevation: 0,
+        actions: [
+          ElevatedButton.icon(
+            onPressed: _resetView,
+            icon: const Icon(Icons.fullscreen),
+            label: const Text('Reset'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: theme.colorScheme.primary,
+              foregroundColor: theme.colorScheme.onPrimary, // Colors both icon and text
+            ),
+          )
+        ],
+        backgroundColor: theme.colorScheme.surface,
+        foregroundColor: theme.colorScheme.onSurface,
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _resetView,
+        backgroundColor: theme.colorScheme.primary,
+        child: Icon(Icons.fullscreen_exit, color: theme.colorScheme.onPrimary),
+      ),
+      body: !isReady
+          ? const Center(child: CircularProgressIndicator())
+          : InteractiveViewer(
+        transformationController: _transformationController,
+        constrained: false,
+        boundaryMargin: const EdgeInsets.all(500),
+        minScale: 0.05,
+        maxScale: 2.0,
+        child: Padding(
+          padding: const EdgeInsets.all(100.0),
+          child: GraphView(
+            graph: graph!,
+            algorithm: algorithm!,
+            paint: Paint()
+              ..color = theme.colorScheme.primary
+              ..strokeWidth = 2.0
+              ..style = PaintingStyle.stroke,
+            builder: (Node node) {
+              var id = node.key!.value as String;
+              var subject = subjectData.subjects.firstWhere(
+                    (s) => s.id == id,
+              );
+              return GestureDetector(
+                onTap: () => _showDetails(subject),
+                child: _buildNodeBox(subject),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showDetails(Subject subject) {
     showModalBottomSheet(
       context: context,
@@ -254,7 +313,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => SubjectQuizManual(
+                              builder: (context) => SubjectQuiz(
                                 subjectId: subject.id,
                                 subjectName: subject.name,
                                 onComplete: () => setState(
@@ -283,59 +342,10 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Learning Roadmap"),
-        elevation: 0,
-        backgroundColor: theme.colorScheme.surface,
-        foregroundColor: theme.colorScheme.onSurface,
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _resetView,
-        backgroundColor: theme.colorScheme.primary,
-        child: Icon(Icons.fullscreen_exit, color: theme.colorScheme.onPrimary),
-      ),
-      body: !isReady
-          ? const Center(child: CircularProgressIndicator())
-          : InteractiveViewer(
-              transformationController: _transformationController,
-              constrained: false,
-              boundaryMargin: const EdgeInsets.all(500),
-              minScale: 0.05,
-              maxScale: 2.0,
-              child: Padding(
-                padding: const EdgeInsets.all(100.0),
-                child: GraphView(
-                  graph: graph!,
-                  algorithm: algorithm!,
-                  paint: Paint()
-                    ..color = theme.colorScheme.primary
-                    ..strokeWidth = 2.0
-                    ..strokeCap = StrokeCap.round
-                    ..style = PaintingStyle.stroke,
-                  builder: (Node node) {
-                    var id = node.key!.value as String;
-                    var subject = subjectData.subjects.firstWhere(
-                      (s) => s.id == id,
-                    );
-                    return GestureDetector(
-                      onTap: () => _showDetails(subject),
-                      child: _buildNodeBox(subject),
-                    );
-                  },
-                ),
-              ),
-            ),
-    );
-  }
-
   Widget _buildNodeBox(Subject subject) {
     bool isDone = completedIds.contains(subject.id);
     final theme = Theme.of(context);
-    
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
