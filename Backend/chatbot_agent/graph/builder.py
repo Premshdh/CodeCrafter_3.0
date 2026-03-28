@@ -10,7 +10,7 @@ def build_graph():
     builder = StateGraph(GraphState)
 
     builder.add_node("router", router_node)
-    builder.add_node("flowchart", generate_flowchart)
+    builder.add_node("flowchart", generate_flowchart)  # Now uses Neo4j
     builder.add_node("test", generate_test)
 
     builder.set_entry_point("router")
