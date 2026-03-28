@@ -2,6 +2,72 @@ import 'package:flutter/material.dart';
 import 'package:graphview/graphview.dart';
 import 'package:codecrafter/quiz.dart';
 
+// Data Models for Graph
+class Subject {
+  final String id;
+  final String name;
+  final String type;
+  final String desc;
+
+  Subject({
+    required this.id,
+    required this.name,
+    required this.type,
+    required this.desc,
+  });
+
+  factory Subject.fromJson(Map<String, dynamic> json) {
+    return Subject(
+      id: json['id'],
+      name: json['name'],
+      type: json['type'],
+      desc: json['desc'],
+    );
+  }
+}
+
+class Dependency {
+  final String from;
+  final String to;
+
+  Dependency({
+    required this.from,
+    required this.to,
+  });
+
+  factory Dependency.fromJson(Map<String, dynamic> json) {
+    return Dependency(
+      from: json['from'],
+      to: json['to'],
+    );
+  }
+}
+
+class SubjectData {
+  final List<Subject> subjects;
+  final List<Dependency> dependencies;
+
+  SubjectData({
+    required this.subjects,
+    required this.dependencies,
+  });
+
+  factory SubjectData.fromJson(Map<String, dynamic> json) {
+    var subjectsList = json['subjects'] as List;
+    List<Subject> subjects =
+        subjectsList.map((i) => Subject.fromJson(i)).toList();
+
+    var dependenciesList = json['dependencies'] as List;
+    List<Dependency> dependencies =
+        dependenciesList.map((i) => Dependency.fromJson(i)).toList();
+
+    return SubjectData(
+      subjects: subjects,
+      dependencies: dependencies,
+    );
+  }
+}
+
 class SubjectDependencyGraph extends StatefulWidget {
   const SubjectDependencyGraph({super.key});
 
@@ -13,7 +79,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
   final TransformationController _transformationController =
       TransformationController();
 
-  final Map<String, dynamic> apiData = {
+  final SubjectData subjectData = SubjectData.fromJson({
     "subjects": [
       {
         "id": "CS101",
@@ -53,7 +119,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
       {"from": "MA101", "to": "CS301"},
       {"from": "MA101", "to": "AI401"},
     ],
-  };
+  });
 
   Graph? graph;
   SugiyamaAlgorithm? algorithm;
@@ -71,13 +137,13 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
     final newGraph = Graph();
     final Map<String, Node> nodeMap = {};
 
-    for (var subject in apiData['subjects']) {
-      var node = Node.Id(subject['id']);
-      nodeMap[subject['id']] = node;
+    for (var subject in subjectData.subjects) {
+      var node = Node.Id(subject.id);
+      nodeMap[subject.id] = node;
     }
 
-    for (var dep in apiData['dependencies']) {
-      newGraph.addEdge(nodeMap[dep['from']]!, nodeMap[dep['to']]!);
+    for (var dep in subjectData.dependencies) {
+      newGraph.addEdge(nodeMap[dep.from]!, nodeMap[dep.to]!);
     }
 
     final config = SugiyamaConfiguration()
@@ -96,7 +162,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
     _transformationController.value = Matrix4.identity();
   }
 
-  void _showDetails(Map<String, dynamic> subject) {
+  void _showDetails(Subject subject) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -131,7 +197,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
                       padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
                       children: [
                         Text(
-                          subject['name'],
+                          subject.name,
                           style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
@@ -142,7 +208,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
                           alignment: Alignment.centerLeft,
                           child: Chip(
                             label: Text(
-                              subject['type'].toString().toUpperCase(),
+                              subject.type.toUpperCase(),
                               style: TextStyle(
                                 color: theme.colorScheme.onPrimaryContainer,
                                 fontWeight: FontWeight.bold,
@@ -163,7 +229,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          subject['desc'],
+                          subject.desc,
                           style: const TextStyle(fontSize: 16, height: 1.5),
                         ),
                         const SizedBox(height: 20),
@@ -189,10 +255,10 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
                             context,
                             MaterialPageRoute(
                               builder: (context) => SubjectQuizManual(
-                                subjectId: subject['id'],
-                                subjectName: subject['name'],
+                                subjectId: subject.id,
+                                subjectName: subject.name,
                                 onComplete: () => setState(
-                                  () => completedIds.add(subject['id']),
+                                  () => completedIds.add(subject.id),
                                 ),
                               ),
                             ),
@@ -252,8 +318,8 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
                     ..style = PaintingStyle.stroke,
                   builder: (Node node) {
                     var id = node.key!.value as String;
-                    var subject = apiData['subjects'].firstWhere(
-                      (s) => s['id'] == id,
+                    var subject = subjectData.subjects.firstWhere(
+                      (s) => s.id == id,
                     );
                     return GestureDetector(
                       onTap: () => _showDetails(subject),
@@ -266,8 +332,8 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
     );
   }
 
-  Widget _buildNodeBox(Map<String, dynamic> subject) {
-    bool isDone = completedIds.contains(subject['id']);
+  Widget _buildNodeBox(Subject subject) {
+    bool isDone = completedIds.contains(subject.id);
     final theme = Theme.of(context);
     
     return Container(
@@ -291,7 +357,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            subject['name'],
+            subject.name,
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
           if (isDone) ...[

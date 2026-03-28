@@ -2,6 +2,54 @@ import 'package:flutter/material.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/shades-of-purple.dart';
 
+// Data Models for Quiz
+class Question {
+  final String questionText;
+  final String? code;
+  final String? language;
+  final List<String> options;
+  final int answerIndex;
+
+  Question({
+    required this.questionText,
+    this.code,
+    this.language,
+    required this.options,
+    required this.answerIndex,
+  });
+
+  factory Question.fromJson(Map<String, dynamic> json) {
+    return Question(
+      questionText: json['question'],
+      code: json['code'],
+      language: json['language'],
+      options: List<String>.from(json['options']),
+      answerIndex: json['answer'],
+    );
+  }
+}
+
+class QuizData {
+  final String section;
+  final List<Question> questions;
+
+  QuizData({
+    required this.section,
+    required this.questions,
+  });
+
+  factory QuizData.fromJson(Map<String, dynamic> json) {
+    var questionsList = json['questions'] as List;
+    List<Question> questions =
+        questionsList.map((i) => Question.fromJson(i)).toList();
+
+    return QuizData(
+      section: json['section'],
+      questions: questions,
+    );
+  }
+}
+
 class SubjectQuizManual extends StatefulWidget {
   final String subjectId;
   final String subjectName;
@@ -19,8 +67,7 @@ class SubjectQuizManual extends StatefulWidget {
 }
 
 class _SubjectQuizManualState extends State<SubjectQuizManual> {
-  // Your full 10-question structured response
-  final Map<String, dynamic> apiResponse = {
+  final QuizData quizData = QuizData.fromJson({
     "section": "Computer Engineering Core",
     "questions": [
       {
@@ -33,13 +80,11 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
         "language": "C++",
       },
       {
-        "question":
-        "What is the output of following code:",
-        "code":
-        "st = str(False+True)\nprint(st*3)",
+        "question": "What is the output of following code:",
+        "code": "st = str(False+True)\nprint(st*3)",
         "options": ["Error", "111", "000", "3"],
         "answer": 1,
-        "language": "Python"
+        "language": "Python",
       },
       {
         "question":
@@ -59,9 +104,10 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
           "Forbidden",
         ],
         "answer": 2,
+        "language": null,
       },
     ],
-  };
+  });
 
   int currentIndex = 0;
   int? selectedIndex;
@@ -69,7 +115,7 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
   int score = 0;
 
   void _nextQuestion() {
-    final List questions = apiResponse['questions'];
+    final List<Question> questions = quizData.questions;
     if (currentIndex < questions.length - 1) {
       setState(() {
         currentIndex++;
@@ -98,7 +144,7 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
   }
 
   void _showResults(bool passed) {
-    final List questions = apiResponse['questions'];
+    final List<Question> questions = quizData.questions;
     final theme = Theme.of(context);
     showDialog(
       context: context,
@@ -139,8 +185,8 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
 
   @override
   Widget build(BuildContext context) {
-    final List questions = apiResponse['questions'];
-    final currentData = questions[currentIndex];
+    final List<Question> questions = quizData.questions;
+    final currentQuestion = questions[currentIndex];
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -163,7 +209,7 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    currentData['question'],
+                    currentQuestion.questionText,
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -172,12 +218,12 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
                   const SizedBox(height: 20),
 
                   // Dracula Code Theme
-                  if (currentData['code'] != null)
+                  if (currentQuestion.code != null)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: HighlightView(
-                        currentData['code'],
-                        language: currentData['language'],
+                        currentQuestion.code!,
+                        language: currentQuestion.language,
                         theme: shadesOfPurpleTheme,
                         padding: const EdgeInsets.all(16),
                         textStyle: const TextStyle(
@@ -191,8 +237,8 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
 
                   // Option Tiles with Circle Avatars
                   ...List.generate(
-                    currentData['options'].length,
-                    (index) => _buildOptionTile(index, currentData),
+                    currentQuestion.options.length,
+                    (index) => _buildOptionTile(index, currentQuestion),
                   ),
 
                   const SizedBox(height: 30),
@@ -259,8 +305,8 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
     );
   }
 
-  Widget _buildOptionTile(int index, Map<String, dynamic> data) {
-    bool isCorrect = index == data['answer'];
+  Widget _buildOptionTile(int index, Question question) {
+    bool isCorrect = index == question.answerIndex;
     bool isSelected = index == selectedIndex;
     final theme = Theme.of(context);
 
@@ -312,7 +358,7 @@ class _SubjectQuizManualState extends State<SubjectQuizManual> {
             const SizedBox(width: 15),
             Expanded(
               child: Text(
-                data['options'][index],
+                question.options[index],
                 style: const TextStyle(fontSize: 15),
               ),
             ),
