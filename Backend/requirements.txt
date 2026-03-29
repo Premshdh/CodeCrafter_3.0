@@ -4,5 +4,7 @@ requests
 langchain
 langgraph
 langchain-google-genai
+langchain-groq
 python-dotenv
 pydantic
+langchain-groq
