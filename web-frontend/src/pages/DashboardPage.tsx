@@ -843,8 +843,60 @@ export default function DashboardPage() {
               display: 'flex',
               flexDirection: 'column',
               gap: 16,
+              position: 'relative',
+              background:
+                'linear-gradient(180deg, rgba(255,255,255,0.18), rgba(244,247,251,0.38) 24%, rgba(244,247,251,0.72) 100%)',
             }}
           >
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                backgroundImage:
+                  'linear-gradient(rgba(109,94,252,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(109,94,252,0.035) 1px, transparent 1px)',
+                backgroundSize: '34px 34px',
+                pointerEvents: 'none',
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                top: -40,
+                left: -20,
+                width: 180,
+                height: 180,
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(109,94,252,0.14), transparent 70%)',
+                animation: 'float 8s ease-in-out infinite',
+                pointerEvents: 'none',
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                right: -30,
+                top: 120,
+                width: 150,
+                height: 150,
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(56,189,248,0.12), transparent 72%)',
+                animation: 'float 11s ease-in-out infinite reverse',
+                pointerEvents: 'none',
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                left: '32%',
+                bottom: 20,
+                width: 170,
+                height: 170,
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(167,139,250,0.1), transparent 72%)',
+                animation: 'float 9s ease-in-out infinite 1s',
+                pointerEvents: 'none',
+              }}
+            />
             {messages.map((message) => (
               <Bubble key={message.id} message={message} />
             ))}
@@ -1188,12 +1240,157 @@ export default function DashboardPage() {
 
                 <div
                   style={{
+                    position: 'relative',
                     display: 'grid',
                     gap: 18,
                     justifyItems: 'center',
-                    padding: '8px 0 4px',
+                    padding: '36px 18px 28px',
+                    borderRadius: 32,
+                    overflow: 'hidden',
+                    background:
+                      'radial-gradient(circle at top, rgba(255,255,255,0.92), rgba(230,241,255,0.9) 52%, rgba(220,234,252,0.96) 100%)',
+                    border: '1px solid rgba(109,94,252,0.12)',
+                    boxShadow:
+                      'inset 0 1px 0 rgba(255,255,255,0.84), 0 24px 42px rgba(148,163,184,0.14), 0 0 0 1px rgba(255,255,255,0.4)',
                   }}
                 >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 12,
+                      borderRadius: 26,
+                      border: '1px dashed rgba(79,111,143,0.12)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      backgroundImage:
+                        'linear-gradient(rgba(79,111,143,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(79,111,143,0.06) 1px, transparent 1px)',
+                      backgroundSize: '36px 36px',
+                      maskImage: 'linear-gradient(180deg, rgba(0,0,0,0.85), rgba(0,0,0,0.35))',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 26,
+                      right: 32,
+                      width: 180,
+                      height: 180,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(79,111,143,0.12)',
+                      boxShadow: '0 0 0 18px rgba(79,111,143,0.04), 0 0 0 36px rgba(79,111,143,0.025)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: 48,
+                      left: 26,
+                      width: 110,
+                      height: 110,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(79,111,143,0.1)',
+                      boxShadow: '0 0 0 14px rgba(79,111,143,0.03)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 40,
+                      left: '50%',
+                      width: 120,
+                      height: 2,
+                      transform: 'translateX(-50%)',
+                      background:
+                        'linear-gradient(90deg, transparent, rgba(79,111,143,0.26), transparent)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: -40,
+                      left: -30,
+                      width: 180,
+                      height: 180,
+                      borderRadius: '50%',
+                      background: 'radial-gradient(circle, rgba(109,94,252,0.18), transparent 68%)',
+                      animation: 'float 8s ease-in-out infinite',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      right: -20,
+                      top: 120,
+                      width: 150,
+                      height: 150,
+                      borderRadius: '50%',
+                      background: 'radial-gradient(circle, rgba(56,189,248,0.18), transparent 70%)',
+                      animation: 'float 10s ease-in-out infinite reverse',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: '38%',
+                      bottom: -40,
+                      width: 170,
+                      height: 170,
+                      borderRadius: '50%',
+                      background: 'radial-gradient(circle, rgba(167,139,250,0.14), transparent 72%)',
+                      animation: 'float 7s ease-in-out infinite 1.2s',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '22%',
+                      left: '16%',
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: 'rgba(79,111,143,0.22)',
+                      boxShadow:
+                        '52px 16px 0 rgba(79,111,143,0.14), 132px -10px 0 rgba(109,94,252,0.18), 198px 38px 0 rgba(56,189,248,0.16), 260px -6px 0 rgba(79,111,143,0.14)',
+                      animation: 'pulse-ring 4.6s ease-in-out infinite',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: '18%',
+                      right: '16%',
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: 'rgba(109,94,252,0.22)',
+                      boxShadow:
+                        '-46px 26px 0 rgba(79,111,143,0.14), -118px -10px 0 rgba(56,189,248,0.16), -170px 44px 0 rgba(79,111,143,0.12)',
+                      animation: 'pulse-ring 5.2s ease-in-out infinite 1.2s',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background:
+                        'linear-gradient(180deg, rgba(255,255,255,0.28), transparent 26%, transparent 74%, rgba(109,94,252,0.05))',
+                      pointerEvents: 'none',
+                    }}
+                  />
                   {prerequisiteChain.map((subjectName, index) => {
                     const isTarget = index === prerequisiteChain.length - 1;
                     const why =
@@ -1216,18 +1413,30 @@ export default function DashboardPage() {
                           disabled={isSending}
                           style={{
                             width: 'min(100%, 250px)',
-                            borderRadius: 18,
+                            borderRadius: 20,
                             border: '2px solid #4f6f8f',
                             background: isTarget
-                              ? 'linear-gradient(180deg, #b9ddf8 0%, #9fd0f7 100%)'
-                              : 'linear-gradient(180deg, #c9e7ff 0%, #abd8fb 100%)',
+                              ? 'linear-gradient(180deg, #d0f0ff 0%, #aad8ff 54%, #96c8f3 100%)'
+                              : 'linear-gradient(180deg, #dcf2ff 0%, #b9e1ff 52%, #a5d4fb 100%)',
                             padding: '14px 16px',
-                            boxShadow: '0 10px 0 rgba(79,111,143,0.08), 0 16px 26px rgba(148,163,184,0.16)',
+                            boxShadow:
+                              '0 12px 0 rgba(79,111,143,0.08), 0 18px 30px rgba(148,163,184,0.16), inset 0 1px 0 rgba(255,255,255,0.72)',
                             cursor: isSending ? 'not-allowed' : 'pointer',
                             opacity: isSending ? 0.65 : 1,
                             textAlign: 'inherit',
+                            position: 'relative',
+                            overflow: 'hidden',
                           }}
                         >
+                          <div
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              background:
+                                'linear-gradient(180deg, rgba(255,255,255,0.34), transparent 42%, transparent)',
+                              pointerEvents: 'none',
+                            }}
+                          />
                           <div
                             style={{
                               display: 'grid',
@@ -1243,7 +1452,7 @@ export default function DashboardPage() {
                                 gap: 6,
                                 padding: '4px 10px',
                                 borderRadius: 999,
-                                background: 'rgba(255,255,255,0.48)',
+                                background: 'rgba(255,255,255,0.54)',
                                 border: '1px solid rgba(79,111,143,0.22)',
                                 color: '#36516d',
                                 fontSize: '0.7rem',
@@ -1270,7 +1479,7 @@ export default function DashboardPage() {
                                 padding: '8px 12px',
                                 borderRadius: 12,
                                 border: '1px solid rgba(54,81,109,0.18)',
-                                background: 'rgba(255,255,255,0.72)',
+                                background: 'rgba(255,255,255,0.78)',
                                 color: '#284561',
                                 fontWeight: 800,
                                 fontSize: '0.78rem',
