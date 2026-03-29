@@ -7,10 +7,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     allowedHosts: [
-      'web-frontend.80.225.195.137.sslip.io',
-      'web-backend.80.225.195.137.sslip.io'
+      '.sourishkanna.me'              // Wildcard for any subdomain on your domain
     ],
-    host: '0.0.0.0', // Ensure it listens on all interfaces for the proxy
-    port: 7004       // Your requested port
+    host: '0.0.0.0',
+    port: 7004
   }
 })
