@@ -294,15 +294,23 @@ def evaluate_quiz(req: QuizEvaluationRequest):
             next_level = "hard"
             transition_message = f"Passed Medium on {current_subject}. Next level: Hard."
         elif current_level == "medium" and not passed:
-            next_level = "easy"
-            transition_message = f"Failed Medium on {current_subject}. Moving to Easy."
+            quiz_ended = True
+            next_level = None
+            transition_message = (
+                f"Failed Medium on {current_subject} after reaching the intermediate stage. "
+                f"Generating feedback."
+            )
         elif current_level == "hard" and passed:
             quiz_ended = True
             next_level = None
             transition_message = f"Passed Hard on {current_subject}. Generating feedback."
         else:
-            next_level = "medium"
-            transition_message = f"Failed Hard on {current_subject}. Moving to Medium."
+            quiz_ended = True
+            next_level = None
+            transition_message = (
+                f"Failed Hard on {current_subject} after reaching the advanced stage. "
+                f"Generating feedback."
+            )
 
     evaluation["passed"] = passed
     evaluation["next_level"] = next_level

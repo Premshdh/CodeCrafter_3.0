@@ -11,6 +11,10 @@ const quizHistorySchema = new mongoose.Schema({
     ref: 'Subject',
     required: true,
   },
+  subjectName: {
+    type: String,
+    default: null,
+  },
   score: {
     type: Number,
     required: true,
@@ -40,7 +44,7 @@ const quizHistorySchema = new mongoose.Schema({
   // Difficulty level chosen by the user (only for regular quizzes)
   difficulty: {
     type: String,
-    enum: ['easy', 'intermediate', 'hard', null],
+    enum: ['easy', 'medium', 'intermediate', 'hard', null],
     default: null,
   },
   // Stores the entire fallback prerequisite learning path
@@ -58,6 +62,6 @@ const quizHistorySchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
-});
+}, { strict: false });
 
 module.exports = mongoose.model('QuizHistory', quizHistorySchema);

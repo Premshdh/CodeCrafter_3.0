@@ -1,804 +1,1428 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import { useQuizData } from '../context/QuizDataContext';
-import api from '../services/api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import gsap from 'gsap';
-import { GRAPH_NODES, GRAPH_EDGES, SEM_COLORS, SEM_LABELS } from '../data/subjectGraph';
+import { useAuth } from '../context/AuthContext';
+import api, { pythonApi } from '../services/api';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-type FlowStep = 'greeting' | 'choosing_action' | 'choosing_subject' | 'choosing_difficulty' | 'ready' | 'sem_intro';
-type DifficultyChoice = 'easy' | 'intermediate' | 'hard';
+type MessageRole = 'assistant' | 'user';
 
 interface ChatMessage {
   id: string;
-  role: 'ai' | 'user';
+  role: MessageRole;
   content: string;
-  type: 'text' | 'chips' | 'subject_grid' | 'diff_buttons' | 'launch' | 'quiz_report_graph' | 'learning_path_chain';
-  chips?: { label: string; icon: string; value: string }[];
-  subjects?: any[];
-  selectedSubject?: any;
-  difficulty?: DifficultyChoice;
-  quizReport?: { subjectId: string; subjectName: string; prereqId: string | null; prereqName: string | null; score: number; total: number; weakConcepts: string[] };
-  attemptChain?: { subjectId: string; subjectName: string; difficulty: string; score: number; total: number; weakConcepts: string[] }[];
 }
 
-// ─── Sem column colors ────────────────────────────────────────────────────────
-const EDGE_COLORS: Record<string, string> = {
-  prerequisite: '#8b5cf6',
-  domain: '#6b7280',
-  uses: '#0ea5e9',
+interface PrerequisiteItem {
+  order: number;
+  subject: string;
+  why: string;
+}
+
+interface PrerequisiteData {
+  subject: string;
+  prerequisites: PrerequisiteItem[];
+}
+
+interface QuizQuestion {
+  id: string;
+  topic: string;
+  concept: string;
+  difficulty: string;
+  type: string;
+  question: string;
+  options: Record<string, string>;
+  correct_answer: string;
+}
+
+interface QuizData {
+  subject: string;
+  level: string;
+  prerequisites: PrerequisiteItem[];
+  questions: QuizQuestion[];
+}
+
+interface QuizResultItem {
+  id: string;
+  topic: string;
+  concept: string;
+  type: string;
+  difficulty: string;
+  question: string;
+  user_answer: string | null;
+  correct_answer: string;
+  is_correct: boolean;
+}
+
+interface FailedQuestion {
+  id: string;
+  topic: string;
+  concept: string;
+  type: string;
+  difficulty: string;
+  question: string;
+  user_answer: string | null;
+  correct_answer: string;
+  level: string;
+}
+
+interface QuizEvaluationResponse {
+  subject: string;
+  target_subject: string;
+  level: string;
+  score: number;
+  total: number;
+  results: QuizResultItem[];
+  passed: boolean;
+  next_level: string | null;
+  next_subject: string | null;
+  next_prereq_index: number | null;
+  next_remediation_mode: boolean;
+  transition_message: string;
+  failed_questions: FailedQuestion[];
+  quiz_ended: boolean;
+  feedback?: string | null;
+}
+
+interface AttemptHistoryItem {
+  subjectId: string;
+  subjectName: string;
+  difficulty: string;
+  score: number;
+  total: number;
+  weakConcepts: string[];
+  answers: { questionId: string; selectedAnswer: string; isCorrect: boolean }[];
+}
+
+interface BackendChatState {
+  subject: string | null;
+  target_subject: string | null;
+  intent: string | null;
+  level: string | null;
+  step: string;
+  prerequisite_data: PrerequisiteData | null;
+  quiz_data: QuizData | null;
+  failed_questions: FailedQuestion[];
+  current_prereq_index: number | null;
+  remediation_mode: boolean;
+}
+
+const CHAT_MESSAGES_KEY = 'dashboard_python_chat_messages';
+const CHAT_STATE_KEY = 'dashboard_python_chat_state';
+const QUIZ_RESULT_KEY = 'dashboard_python_quiz_result';
+const ATTEMPT_HISTORY_KEY = 'dashboard_python_attempt_history';
+
+const INITIAL_CHAT_STATE: BackendChatState = {
+  subject: null,
+  target_subject: null,
+  intent: null,
+  level: null,
+  step: 'start',
+  prerequisite_data: null,
+  quiz_data: null,
+  failed_questions: [],
+  current_prereq_index: null,
+  remediation_mode: false,
 };
 
-// ─── Subject Knowledge Graph SVG ────────────────────────────────────────────
-function SubjectGraph({ onNodeClick, highlightPath }: { onNodeClick: (id: string) => void; highlightPath?: string[] | null }) {
-  const [hovered, setHovered] = useState<string | null>(null);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string; subtext: string } | null>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
+function readSessionJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
-  useEffect(() => {
-    if (!svgRef.current) return;
-    const ctx = gsap.context(() => {
-      gsap.fromTo('.graph-node', 
-        { scale: 0, opacity: 0 },
-        { 
-          scale: 1, opacity: 1, duration: 0.6, stagger: 0.04, ease: 'back.out(1.7)', transformOrigin: '50% 50%',
-          onComplete: () => {
-            gsap.to('.graph-node', {
-              y: "+=2", x: "+=1", rotation: "random(-1.5, 1.5)", duration: "random(1.5, 2.5)",
-              repeat: -1, yoyo: true, ease: "sine.inOut", stagger: { each: 0.1, from: "random" }
-            });
-          }
-        }
-      );
-      gsap.fromTo('.graph-edge', 
-        { opacity: 0 },
-        { opacity: 0.6, duration: 0.8, stagger: 0.03, delay: 0.5, ease: 'power2.out' }
-      );
-    }, svgRef);
-    return () => ctx.revert();
+function makeMessageId() {
+  return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function stripMarkdown(text: string) {
+  return text.replace(/\*\*/g, '').trim();
+}
+
+function getBoldSegments(text: string) {
+  return Array.from(text.matchAll(/\*\*(.*?)\*\*/g))
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+}
+
+function summarizeFeedback(feedback: string) {
+  const cleaned = stripMarkdown(feedback);
+  const sentences = cleaned
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const boldSegments = getBoldSegments(feedback);
+  const uniqueHighlights = Array.from(new Set(boldSegments));
+  const mistakeMatch = cleaned.match(/(\d+)\s+out of your\s+(\d+)\s+mistakes/i);
+  const difficultyMatch = cleaned.match(
+    /(easy and medium|medium and hard|easy and hard|easy|medium|hard)\s+difficulty/i
+  );
+  const primaryWeakness =
+    uniqueHighlights[0] ||
+    cleaned.match(/primary weakness in\s+([A-Za-z0-9\s-]+)/i)?.[1]?.trim() ||
+    'Needs review';
+  const recurringPattern =
+    sentences.find((sentence) => /recurring pattern/i.test(sentence)) ||
+    sentences.find((sentence) => /suggests gaps/i.test(sentence)) ||
+    '';
+  const reviseFirst =
+    sentences.find((sentence) => /should first revise/i.test(sentence)) ||
+    sentences.find((sentence) => /improve most effectively/i.test(sentence)) ||
+    '';
+
+  return {
+    cleaned,
+    primaryWeakness,
+    mistakeCount: mistakeMatch ? `${mistakeMatch[1]} / ${mistakeMatch[2]}` : null,
+    difficultyPattern: difficultyMatch ? difficultyMatch[1] : null,
+    highlights: uniqueHighlights,
+    recurringPattern,
+    reviseFirst,
+  };
+}
+
+function Bubble({ message }: { message: ChatMessage }) {
+  const isAssistant = message.role === 'assistant';
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: isAssistant ? 'flex-start' : 'flex-end',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: '82%',
+          padding: '12px 14px',
+          borderRadius: isAssistant ? '8px 16px 16px 16px' : '16px 8px 16px 16px',
+          background: isAssistant ? 'var(--bg-card)' : 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+          border: isAssistant ? '1px solid var(--border)' : 'none',
+          color: 'var(--text-primary)',
+          lineHeight: 1.6,
+          fontSize: '0.92rem',
+          whiteSpace: 'pre-wrap',
+          boxShadow: isAssistant ? 'none' : '0 10px 24px rgba(139,92,246,0.25)',
+        }}
+      >
+        {message.content}
+      </div>
+    </div>
+  );
+}
+
+function ActionButton({
+  label,
+  onClick,
+  disabled,
+  tone = 'default',
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: 'default' | 'accent' | 'danger';
+}) {
+  const tones = {
+    default: {
+      background: 'var(--bg-card)',
+      border: '1px solid var(--border)',
+      color: 'var(--text-primary)',
+    },
+    accent: {
+      background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+      border: 'none',
+      color: '#fff',
+    },
+    danger: {
+      background: 'rgba(239,68,68,0.08)',
+      border: '1px solid rgba(239,68,68,0.35)',
+      color: '#fca5a5',
+    },
+  } as const;
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        padding: '11px 14px',
+        borderRadius: 12,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontWeight: 700,
+        fontSize: '0.86rem',
+        opacity: disabled ? 0.6 : 1,
+        transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+        boxShadow: tone === 'accent' ? '0 10px 24px rgba(139,92,246,0.25)' : 'none',
+        ...tones[tone],
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+export default function DashboardPage() {
+  const { user, updateUser } = useAuth();
+  const navigate = useNavigate();
+
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    readSessionJson<ChatMessage[]>(CHAT_MESSAGES_KEY, [])
+  );
+  const [chatState, setChatState] = useState<BackendChatState>(() =>
+    readSessionJson<BackendChatState>(CHAT_STATE_KEY, INITIAL_CHAT_STATE)
+  );
+  const [quizResult, setQuizResult] = useState<QuizEvaluationResponse | null>(() =>
+    readSessionJson<QuizEvaluationResponse | null>(QUIZ_RESULT_KEY, null)
+  );
+  const [attemptHistory, setAttemptHistory] = useState<AttemptHistoryItem[]>(() =>
+    readSessionJson<AttemptHistoryItem[]>(ATTEMPT_HISTORY_KEY, [])
+  );
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, string | undefined>>({});
+  const [inputValue, setInputValue] = useState('');
+  const [quizStats, setQuizStats] = useState({ total: 0, avgScore: 0, weak: 0 });
+  const [isSending, setIsSending] = useState(false);
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [historySaved, setHistorySaved] = useState(false);
+
+  const headerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const appendMessage = useCallback((role: MessageRole, content: string) => {
+    if (!content) return;
+    setMessages((prev) => [...prev, { id: makeMessageId(), role, content }]);
   }, []);
 
-  const W = 900, H = 560;
+  const syncFromResponse = useCallback((data: Partial<BackendChatState> & { response?: string | null }) => {
+    setChatState((prev) => ({
+      subject: data.subject ?? prev.subject,
+      target_subject: data.target_subject ?? prev.target_subject,
+      intent: data.intent ?? prev.intent,
+      level: data.level ?? prev.level,
+      step: data.step ?? prev.step,
+      prerequisite_data: data.prerequisite_data ?? prev.prerequisite_data,
+      quiz_data: data.quiz_data ?? prev.quiz_data,
+      failed_questions: data.failed_questions ?? prev.failed_questions,
+      current_prereq_index: data.current_prereq_index ?? prev.current_prereq_index,
+      remediation_mode: data.remediation_mode ?? prev.remediation_mode,
+    }));
 
-  // Compute arrow endpoint (shortened to not overlap node)
-  const arrowEndpoint = (fx: number, fy: number, tx: number, ty: number, r = 18) => {
-    const dx = tx - fx, dy = ty - fy;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    return { x: tx - (dx / len) * r, y: ty - (dy / len) * r };
-  };
+    if (data.quiz_data) {
+      setQuizAnswers({});
+      setQuizResult(null);
+    }
+  }, []);
 
-  return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      {/* Tooltip */}
-      {tooltip && (
-        <div style={{
-          position: 'absolute', pointerEvents: 'none', zIndex: 20,
-          left: (tooltip.x / W) * 100 + '%', top: (tooltip.y / H) * 100 + '%',
-          transform: 'translate(-50%, -130%)',
-          background: 'var(--bg-elevated)', border: '1px solid var(--border-hover)',
-          borderRadius: 10, padding: '8px 12px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-          maxWidth: 200, textAlign: 'center',
-          animation: 'message-in 0.15s ease both',
-        }}>
-          <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.82rem' }}>{tooltip.text}</div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: 2, lineHeight: 1.4 }}>{tooltip.subtext}</div>
-        </div>
-      )}
+  const sendChatPayload = useCallback(
+    async (
+      payload: Record<string, unknown>,
+      options?: { userLabel?: string; preserveResult?: boolean }
+    ) => {
+      const userLabel = options?.userLabel;
+      if (userLabel) appendMessage('user', userLabel);
+      if (!options?.preserveResult) setQuizResult(null);
 
-      <svg ref={svgRef} viewBox={`140 10 700 520`} style={{ width: '100%', height: '100%' }}>
-        <defs>
-          {/* Arrow marker */}
-          <marker id="arrow-prereq" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-            <path d="M0,0 L0,6 L8,3 z" fill={EDGE_COLORS.prerequisite} opacity="0.6" />
-          </marker>
-          <marker id="arrow-uses" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-            <path d="M0,0 L0,6 L8,3 z" fill={EDGE_COLORS.uses} opacity="0.5" />
-          </marker>
-          {/* Glow filter */}
-          <filter id="node-glow">
-            <feGaussianBlur stdDeviation="3" result="blur" />
-            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-          </filter>
-          {/* Sem background columns */}
-          {[
-            { x: 160, label: 'Sem 1', color: SEM_COLORS.sem1 },
-            { x: 350, label: 'Sem 2', color: SEM_COLORS.sem2 },
-            { x: 540, label: 'Sem 3', color: SEM_COLORS.sem3 },
-            { x: 730, label: 'Sem 4', color: SEM_COLORS.sem4 },
-          ].map(col => (
-            <rect key={col.label} x={col.x} y={10} width={115} height={H - 20}
-              rx={12} fill={col.color} opacity="0.025" />
-          ))}
-        </defs>
-
-        {/* Sem column labels */}
-        {[
-          { x: 210, label: 'Sem 1', color: SEM_COLORS.sem1 },
-          { x: 400, label: 'Sem 2', color: SEM_COLORS.sem2 },
-          { x: 590, label: 'Sem 3', color: SEM_COLORS.sem3 },
-          { x: 780, label: 'Sem 4', color: SEM_COLORS.sem4 },
-        ].map(col => (
-          <text key={col.label} x={col.x} y={26} textAnchor="middle"
-            fontSize={9} fontWeight={700} fill={col.color} opacity={0.6} letterSpacing="0.08em">
-            {col.label.toUpperCase()}
-          </text>
-        ))}
-
-        {/* Edges */}
-        {GRAPH_EDGES.map((edge, i) => {
-          const from = GRAPH_NODES.find(n => n.id === edge.from);
-          const to = GRAPH_NODES.find(n => n.id === edge.to);
-          if (!from || !to) return null;
-          const end = arrowEndpoint(from.x, from.y, to.x, to.y, 16);
-          const active = hovered === from.id || hovered === to.id || highlightPath?.includes(from.id) || highlightPath?.includes(to.id);
-          const activeEdge = highlightPath?.includes(from.id) && highlightPath?.includes(to.id);
-          const color = EDGE_COLORS[edge.type];
-
-          return (
-            <line key={i} className="graph-edge"
-              x1={from.x} y1={from.y} x2={end.x} y2={end.y}
-              stroke={color} strokeWidth={activeEdge || active ? 2 : 0.8}
-              strokeDasharray={edge.type === 'uses' ? '4 3' : 'none'}
-              opacity={activeEdge ? 1 : active ? 0.75 : 0.25}
-              markerEnd={`url(#arrow-${edge.type === 'uses' ? 'uses' : 'prereq'})`}
-              style={{ transition: 'opacity 0.3s, stroke-width 0.3s' }}
-            />
-          );
-        })}
-
-        {/* Nodes */}
-        {GRAPH_NODES.map(node => {
-          const isHovered = hovered === node.id;
-          const isHighlighted = highlightPath?.includes(node.id);
-          const r = isHovered || isHighlighted ? 20 : 16;
-
-          return (
-            <g key={node.id} className="graph-node"
-              style={{ cursor: 'pointer' }}
-              onMouseEnter={() => {
-                setHovered(node.id);
-                setTooltip({ x: node.x, y: node.y, text: node.label, subtext: `${SEM_LABELS[node.semId]} — click to quiz` });
-              }}
-              onMouseLeave={() => { setHovered(null); setTooltip(null); }}
-              onClick={() => onNodeClick(node.id)}>
-
-              {/* Glow ring on hover */}
-              {(isHovered || isHighlighted) && (
-                <circle cx={node.x} cy={node.y} r={r + 8} fill={node.color} opacity={0.15} />
-              )}
-
-              {/* Node circle */}
-              <circle cx={node.x} cy={node.y} r={r}
-                fill={`${node.color}22`}
-                stroke={node.color}
-                strokeWidth={isHovered || isHighlighted ? 2 : 1}
-                filter={isHovered ? 'url(#node-glow)' : undefined}
-                style={{ transition: 'all 0.2s' }}
-              />
-
-              {/* Icon */}
-              <text x={node.x} y={node.y + 1} textAnchor="middle" dominantBaseline="middle"
-                fontSize={isHovered ? 11 : 9} fill={node.color} fontWeight={700}
-                style={{ userSelect: 'none', transition: 'font-size 0.2s' }}>
-                {node.icon}
-              </text>
-
-              {/* Label below */}
-              <text x={node.x} y={node.y + r + 9} textAnchor="middle"
-                fontSize={7.5} fill={isHovered ? 'var(--text-primary)' : 'var(--text-muted)'}
-                fontWeight={isHovered ? 700 : 400}
-                style={{ transition: 'fill 0.2s', userSelect: 'none' }}>
-                {node.shortLabel}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-
-      {/* Legend */}
-      <div style={{ position: 'absolute', bottom: 8, left: 8, display: 'flex', gap: 12 }}>
-        {[
-          { color: EDGE_COLORS.prerequisite, label: 'Prerequisite', dash: false },
-          { color: EDGE_COLORS.uses, label: 'Uses', dash: true },
-        ].map(l => (
-          <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <svg width={24} height={8}>
-              <line x1={0} y1={4} x2={24} y2={4} stroke={l.color} strokeWidth={1.5}
-                strokeDasharray={l.dash ? '4 3' : 'none'} opacity={0.7} />
-            </svg>
-            <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{l.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
+      setIsSending(true);
+      try {
+        const { data } = await pythonApi.post('/chat', payload);
+        if (data?.response) appendMessage('assistant', data.response);
+        syncFromResponse(data);
+        if (data?.quiz_data) {
+          setHistorySaved(false);
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Failed to contact the chatbot backend.';
+        appendMessage('assistant', `Backend error: ${message}`);
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [appendMessage, syncFromResponse]
   );
-}
 
-// ─── Message Bubble ───────────────────────────────────────────────────────────
-function Bubble({ msg, onChipClick }: { msg: ChatMessage; onChipClick?: (value: string) => void }) {
-  const isAI = msg.role === 'ai';
-  return (
-    <div className="animate-message-in" style={{
-      display: 'flex', gap: 10, flexDirection: isAI ? 'row' : 'row-reverse',
-      maxWidth: '100%',
-    }}>
-      {isAI && (
-        <div style={{ width: 28, height: 28, borderRadius: 8, flexShrink: 0, background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800, color: 'white', marginTop: 2 }}>
-          CC
-        </div>
-      )}
-      <div style={{ maxWidth: '80%' }}>
-        {msg.type === 'text' && (
-          <div style={{
-            padding: '10px 14px', borderRadius: isAI ? '4px 14px 14px 14px' : '14px 4px 14px 14px',
-            background: isAI ? 'var(--bg-card)' : 'var(--purple)',
-            border: isAI ? '1px solid var(--border)' : 'none',
-            color: 'var(--text-primary)', fontSize: '0.9rem', lineHeight: 1.6,
-            boxShadow: isAI ? 'none' : '0 4px 16px rgba(139,92,246,0.3)',
-          }}>
-            {msg.content}
-          </div>
-        )}
-        {msg.type === 'chips' && (
-          <div style={{ padding: '10px 14px', borderRadius: '4px 14px 14px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: '0.9rem', lineHeight: 1.6 }}>
-            <p style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{msg.content}</p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {msg.chips?.map(chip => (
-                <button key={chip.value} onClick={() => onChipClick?.(chip.value)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 20, border: '1px solid var(--border-hover)', background: 'var(--purple-deep)', color: 'var(--purple-light)', fontWeight: 600, fontSize: '0.83rem', cursor: 'pointer', transition: 'all 0.2s' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--purple-dim)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 0 12px var(--purple-glow)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'var(--purple-deep)'; (e.currentTarget as HTMLElement).style.boxShadow = 'none'; }}>
-                  {chip.icon} {chip.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {msg.type === 'subject_grid' && (
-          <div style={{ padding: '10px 14px', borderRadius: '4px 14px 14px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)', maxWidth: 480 }}>
-            <p style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{msg.content}</p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-              {msg.subjects?.map(subj => (
-                <button key={subj.id} onClick={() => onChipClick?.(subj.id)}
-                  style={{ padding: '10px 8px', borderRadius: 12, border: `1px solid ${subj.color}25`, background: `${subj.color}10`, cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = `${subj.color}60`; (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = `${subj.color}25`; (e.currentTarget as HTMLElement).style.transform = ''; }}>
-                  <div style={{ fontSize: '1.2rem', marginBottom: 4 }}>{subj.icon}</div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: subj.color }}>{subj.shortName}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {msg.type === 'diff_buttons' && (
-          <div style={{ padding: '10px 14px', borderRadius: '4px 14px 14px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-            <p style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{msg.content}</p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {[
-                { v: 'easy', icon: '🟢', label: 'Easy', color: '#16a34a', bg: 'rgba(34,197,94,0.1)' },
-                { v: 'intermediate', icon: '🟡', label: 'Mid', color: '#d97706', bg: 'rgba(245,158,11,0.1)' },
-                { v: 'hard', icon: '🔴', label: 'Hard', color: '#dc2626', bg: 'rgba(239,68,68,0.1)' },
-              ].map(d => (
-                <button key={d.v} onClick={() => onChipClick?.(d.v)}
-                  style={{ flex: 1, padding: '12px 8px', borderRadius: 12, border: `1px solid ${d.color}30`, background: d.bg, cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = `${d.color}70`; (e.currentTarget as HTMLElement).style.transform = 'scale(1.04)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = `${d.color}30`; (e.currentTarget as HTMLElement).style.transform = ''; }}>
-                  <div style={{ fontSize: '1.2rem', marginBottom: 4 }}>{d.icon}</div>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 700, color: d.color }}>{d.label}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {msg.type === 'launch' && (
-          <div style={{ padding: '14px 18px', borderRadius: '4px 14px 14px 14px', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.3)' }}>
-            <p style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{msg.content}</p>
-            <button onClick={() => onChipClick?.('launch')}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 22px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)', color: 'white', fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer', boxShadow: '0 4px 20px rgba(139,92,246,0.4)', transition: 'transform 0.2s' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.04)'; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = ''; }}>
-              ▶ Start Quiz →
-            </button>
-          </div>
-        )}
-        {msg.type === 'quiz_report_graph' && msg.quizReport && (
-          <div style={{ padding: '16px 20px', borderRadius: '4px 14px 14px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)', maxWidth: 480 }}>
-            <p style={{ marginBottom: 16, color: 'var(--text-primary)', fontSize: '0.9rem', lineHeight: 1.6 }}>{msg.content}</p>
-            
-            <div style={{ background: 'var(--bg-elevated)', borderRadius: 12, padding: 20, border: '1px solid var(--border)', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
-              {msg.quizReport.prereqName && (
-                <>
-                  <div style={{ padding: '10px 16px', background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', borderRadius: 8, fontWeight: 700, fontSize: '0.85rem', border: '1px solid rgba(139,92,246,0.3)' }}>
-                    {msg.quizReport.prereqName}
-                  </div>
-                  <div style={{ color: '#6b7280', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.7rem', fontWeight: 600 }}>Prerequisite</span>
-                    <span>→</span>
-                  </div>
-                </>
-              )}
-              <div style={{ padding: '10px 16px', background: 'rgba(239,68,68,0.1)', color: '#ef4444', borderRadius: 8, fontWeight: 700, fontSize: '0.85rem', border: '1px solid rgba(239,68,68,0.3)', boxShadow: '0 0 12px rgba(239,68,68,0.2)' }}>
-                {msg.quizReport.subjectName}
-              </div>
-            </div>
+  const initializeConversation = useCallback(async () => {
+    await sendChatPayload(
+      {
+        message: null,
+        subject: null,
+        target_subject: null,
+        step: 'start',
+        intent: null,
+        level: null,
+        prerequisite_data: null,
+        quiz_data: null,
+        failed_questions: [],
+        current_prereq_index: null,
+        remediation_mode: false,
+      },
+      { preserveResult: true }
+    );
+  }, [sendChatPayload]);
 
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {msg.chips?.map(chip => (
-                <button key={chip.value} onClick={() => onChipClick?.(chip.value)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 20, border: '1px solid var(--purple)', background: 'var(--purple)', color: 'white', fontWeight: 600, fontSize: '0.83rem', cursor: 'pointer', transition: 'all 0.2s' }}>
-                  {chip.icon} {chip.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {msg.type === 'learning_path_chain' && msg.attemptChain && (
-          <div style={{ padding: '16px 20px', borderRadius: '4px 14px 14px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)', maxWidth: 480 }}>
-            <p style={{ marginBottom: 16, color: 'var(--text-primary)', fontSize: '0.9rem', lineHeight: 1.6 }}>{msg.content}</p>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 0, marginBottom: 16 }}>
-              {msg.attemptChain.map((att, i) => {
-                const isPass = (att.score / att.total) >= 0.7;
-                return (
-                  <div key={i} style={{ display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: isPass ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)', border: `1px solid ${isPass ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, padding: '12px 16px', borderRadius: 12 }}>
-                      <div style={{ fontSize: '1.4rem' }}>{isPass ? '🟢' : '🔴'}</div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, color: isPass ? '#16a34a' : '#ef4444', fontSize: '0.95rem' }}>{att.subjectName} <span style={{fontSize: '0.7rem', opacity: 0.8, fontWeight: 500}}>({att.difficulty})</span></div>
-                        <div style={{ fontSize: '0.75rem', color: isPass ? '#15803d' : '#b91c1c', marginTop: 2 }}>Score: {att.score}/{att.total}</div>
-                        {!isPass && att.weakConcepts && att.weakConcepts.length > 0 && (
-                          <div style={{ fontSize: '0.7rem', color: '#991b1b', marginTop: 4 }}>
-                            <span style={{fontWeight: 700}}>Weak:</span> {att.weakConcepts.join(', ')}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    {i < msg.attemptChain!.length - 1 && (
-                      <div style={{ width: 2, height: 16, background: 'var(--border)', margin: '0 auto' }} />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {msg.chips?.map(chip => (
-                <button key={chip.value} onClick={() => onChipClick?.(chip.value)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 20, border: '1px solid var(--purple)', background: 'var(--purple)', color: 'white', fontWeight: 600, fontSize: '0.83rem', cursor: 'pointer', transition: 'all 0.2s' }}>
-                  {chip.icon} {chip.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
-export default function DashboardPage() {
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { mainSubjects } = useQuizData();
-
-  // Chat state
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    try {
-      const saved = sessionStorage.getItem('dashboard_chat');
-      if (saved) return JSON.parse(saved);
-    } catch(e) { }
-    return [];
-  });
-  const [step, setStep] = useState<FlowStep>('greeting');
-  const [selectedSubject, setSelectedSubject] = useState<any>(null);
-  const [selectedDiff, setSelectedDiff] = useState<DifficultyChoice | null>(null);
-  const [inputVal, setInputVal] = useState('');
-  const [graphHighlightArray, setGraphHighlightArray] = useState<string[]>([]);
-  const [quizStats, setQuizStats] = useState({ total: 0, avgScore: 0, weak: 0 });
-
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const headerRef = useRef<HTMLDivElement>(null);
-  const graphRef = useRef<HTMLDivElement>(null);
-  const msgIdRef = useRef(0);
-  const nextId = () => `msg-${++msgIdRef.current}-${Date.now()}`;
-
-  // ── Load stats ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!user?.id) return;
-    api.get(`/history/user/${user.id}`).then(r => {
-      const data = r.data || [];
-      const total = data.length;
-      const avgScore = total ? Math.round(data.reduce((a: number, q: any) => a + (q.score / q.totalQuestions) * 100, 0) / total) : 0;
-      setQuizStats({ total, avgScore, weak: user.weak_subjects?.length || 0 });
-    }).catch(() => {});
+    api
+      .get(`/history/user/${user.id}`)
+      .then((response) => {
+        const rows = response.data || [];
+        const total = rows.length;
+        const avgScore = total
+          ? Math.round(
+              rows.reduce(
+                (sum: number, row: { score: number; totalQuestions: number }) =>
+                  sum + (row.score / row.totalQuestions) * 100,
+                0
+              ) / total
+            )
+          : 0;
+        setQuizStats({ total, avgScore, weak: user.weak_subjects?.length || 0 });
+      })
+      .catch(() => {});
   }, [user]);
 
-  // ── GSAP panel animations ─────────────────────────────────────────────────
   useEffect(() => {
     const ctx = gsap.context(() => {
-      gsap.from(headerRef.current, { y: -16, opacity: 0, duration: 0.6, ease: 'power3.out' });
-      gsap.from(graphRef.current, { x: 30, opacity: 0, duration: 0.7, delay: 0.3, ease: 'power3.out' });
+      gsap.from(headerRef.current, {
+        y: -18,
+        opacity: 0,
+        duration: 0.6,
+        ease: 'power3.out',
+      });
+      gsap.from(panelRef.current, {
+        x: 26,
+        opacity: 0,
+        duration: 0.7,
+        delay: 0.15,
+        ease: 'power3.out',
+      });
     });
     return () => ctx.revert();
   }, []);
 
-  // ── Initialize greeting / AI Summary ──────────────────────────────────────
   useEffect(() => {
-    const report = location.state?.quizReport;
-    const firstName = user?.name?.split(' ')[0] || 'there';
+    sessionStorage.setItem(CHAT_MESSAGES_KEY, JSON.stringify(messages));
+  }, [messages]);
 
-    setTimeout(() => {
-      // If we just returned from a quiz
-      if (report) {
-        const attemptChain = location.state?.attemptChain || [];
-        
-        // ── CHAIN ANALYSIS (length > 1) ──
-        if (attemptChain.length > 1) {
-          const rootAttempt = attemptChain[attemptChain.length - 1];
-          const initialAttempt = attemptChain[0];
-          const isRootPass = (rootAttempt.score / rootAttempt.total) >= 0.7;
-          
-          let summary = `Welcome back, ${firstName}! I've traced your entire learning path.\n\n`;
-          summary += `You initially struggled with **${initialAttempt.subjectName}**. By tracing the prerequisites downwards, we identified that your root gap lies at **${rootAttempt.subjectName}**.\n\n`;
-          
-          if (isRootPass) summary += `Since you passed the fundamental quiz for ${rootAttempt.subjectName}, you have the foundation to work your way back up! ✅`;
-          else summary += `You also struggled with ${rootAttempt.subjectName}, which means we need to review extreme core basics before returning to ${initialAttempt.subjectName}.`;
-
-          // Highlight ALL nodes in graph
-          setGraphHighlightArray(attemptChain.map((a: any) => a.subjectId));
-
-          addAiMessage({
-            content: summary,
-            type: 'learning_path_chain',
-            attemptChain: attemptChain,
-            chips: [
-              { label: 'Review Full Dashboard', icon: '📊', value: 'progress' }
-            ],
-          });
-          
-          window.history.replaceState({}, document.title);
-          setStep('choosing_action');
-          return;
-        }
-
-        // ── SINGLE QUIZ ANALYSIS (length = 1) ──
-        const { subjectId, subjectName, difficulty, score, total, weakConcepts } = report;
-        const pct = score / total;
-        
-        // Find prerequisite
-        const subjData = mainSubjects.find(s => s.id === subjectId);
-        const prereqId = subjData?.prerequisiteId || null;
-        const prereqData = prereqId ? mainSubjects.find(s => s.id === prereqId) : null;
-        
-        let summary = `Welcome back, ${firstName}! I've analyzed your test results for **${subjectName}** (${difficulty} mode).\n\n`;
-        
-        if (pct === 1) {
-          summary += `🏆 Flawless! Perfect score (${score}/${total}). You've clearly mastered this tier. `;
-          addAiMessage({
-            content: summary,
-            type: 'chips',
-            chips: [
-              { label: 'Take another Quiz', icon: '📝', value: 'quiz' },
-              { label: 'Sem Diagnostic', icon: '🎯', value: 'sem' }
-            ],
-          });
-        } else if (pct >= 0.7) {
-          summary += `🔥 Great job! You scored ${score}/${total}. Your understanding is solid. `;
-           addAiMessage({
-            content: summary,
-            type: 'chips',
-            chips: [
-              { label: 'Take another Quiz', icon: '📝', value: 'quiz' },
-              { label: 'Sem Diagnostic', icon: '🎯', value: 'sem' }
-            ],
-          });
-        } else {
-          // Failure case -> show visual graph msg
-          summary += `You scored ${score}/${total}. Based on your performance, the root cause appears to be weak foundational concepts. `;
-          if (prereqData) {
-            summary += `Before retrying **${subjectName}**, I highly recommend reviewing its prerequisite: **${prereqData.shortName}**.`;
-          } else {
-            summary += `I recommend reviewing the core basics for this subject.`;
-          }
-          if (weakConcepts && weakConcepts.length > 0) {
-            summary += `\nFocus closely on: *${weakConcepts.join(', ')}*.`;
-          }
-
-          // Highlight failed + prereq on the big graph!
-          if (prereqId) setGraphHighlightArray([subjectId, prereqId]);
-          else setGraphHighlightArray([subjectId]);
-
-          addAiMessage({
-            content: summary,
-            type: 'quiz_report_graph',
-            quizReport: {
-               subjectId, subjectName,
-               prereqId, prereqName: prereqData?.shortName || null,
-               score, total, weakConcepts
-            },
-            chips: [
-              ...(prereqData ? [{ label: `Take ${prereqData.shortName} Quiz`, icon: '🔗', value: 'prereq_link' }] : []),
-              { label: 'Review Dashboard', icon: '📊', value: 'progress' },
-            ],
-          });
-        }
-        
-        // Clear state so refresh doesn't duplicate the summary
-        window.history.replaceState({}, document.title);
-        setStep('choosing_action');
-      } else {
-        // Standard greeting
-        setMessages(prev => {
-          if (prev.length > 0) return prev; // Do not replay default greeting if chat history exists
-          return [...prev, {
-            id: nextId(),
-            role: 'ai',
-            content: `Hey ${firstName}! 👋 I'm your CodeCrafters study companion. What would you like to do today?`,
-            type: 'chips',
-            chips: [
-              { label: 'Quiz me', icon: '📝', value: 'quiz' },
-              { label: 'Sem Diagnostic', icon: '🎯', value: 'sem' },
-              { label: 'My Progress', icon: '📊', value: 'progress' },
-            ],
-          }];
-        });
-        setStep('choosing_action');
-      }
-    }, 400);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  // ── Auto-scroll & Save ────────────────────────────────────────────────────
   useEffect(() => {
-    sessionStorage.setItem('dashboard_chat', JSON.stringify(messages));
+    sessionStorage.setItem(CHAT_STATE_KEY, JSON.stringify(chatState));
+  }, [chatState]);
+
+  useEffect(() => {
+    sessionStorage.setItem(QUIZ_RESULT_KEY, JSON.stringify(quizResult));
+  }, [quizResult]);
+
+  useEffect(() => {
+    sessionStorage.setItem(ATTEMPT_HISTORY_KEY, JSON.stringify(attemptHistory));
+  }, [attemptHistory]);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // ── Message helpers ───────────────────────────────────────────────────────
-  const addAiMessage = useCallback((msg: Omit<ChatMessage, 'id' | 'role'>) => {
-    setMessages(prev => [...prev, { ...msg, id: nextId(), role: 'ai' }]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const addUserMessage = useCallback((content: string) => {
-    setMessages(prev => [...prev, { id: nextId(), role: 'user', type: 'text', content }]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Chat flow handler ─────────────────────────────────────────────────────
-  const handleChip = useCallback((value: string) => {
-    if (value === 'launch' && selectedSubject && selectedDiff) {
-      navigate('/quiz', { state: { subjectId: selectedSubject.id, difficulty: selectedDiff } });
-      return;
+  useEffect(() => {
+    if (messages.length === 0 && chatState.step === 'start' && !isSending) {
+      void initializeConversation();
     }
+  }, [messages.length, chatState.step, isSending, initializeConversation]);
 
-    if (step === 'choosing_action') {
-      if (value === 'quiz') {
-        addUserMessage('📝 Quiz me');
-        setStep('choosing_subject');
-        const available = mainSubjects.filter(s => s.questions.length > 0);
-        setTimeout(() => addAiMessage({
-          content: 'Great! Which subject would you like to be quizzed on? (Only subjects with available questions are shown)',
-          type: 'subject_grid',
-          subjects: available.slice(0, 12),
-        }), 350);
-      } else if (value === 'sem') {
-        addUserMessage('🎯 Sem Diagnostic');
-        setTimeout(() => {
-          addAiMessage({ content: "Taking you to the Semester Diagnostic — I'll test you on 4 questions per subject so you can find your weak spots!", type: 'text' });
-          setTimeout(() => navigate('/sem-check'), 800);
-        }, 350);
-      } else if (value === 'progress') {
-        addUserMessage('📊 My Progress');
-        setStep('greeting');
-        setTimeout(() => {
-          addAiMessage({ content: `Here's your snapshot:\n\n📝 ${quizStats.total} quizzes taken\n📊 ${quizStats.avgScore}% average score\n⚠️ ${quizStats.weak} weak subject${quizStats.weak !== 1 ? 's' : ''} identified.\n\nWant to work on a weak subject or take a fresh quiz?`, type: 'chips', chips: [{ label: 'Quiz me', icon: '📝', value: 'quiz' }, { label: 'View History', icon: '📋', value: 'history' }] });
-          setStep('choosing_action');
-        }, 350);
-      } else if (value === 'history') {
-        navigate('/history');
+  const resetConversation = useCallback(() => {
+    sessionStorage.removeItem(CHAT_MESSAGES_KEY);
+    sessionStorage.removeItem(CHAT_STATE_KEY);
+    sessionStorage.removeItem(QUIZ_RESULT_KEY);
+    sessionStorage.removeItem(ATTEMPT_HISTORY_KEY);
+    setMessages([]);
+    setChatState(INITIAL_CHAT_STATE);
+    setQuizResult(null);
+    setAttemptHistory([]);
+    setQuizAnswers({});
+    setInputValue('');
+    setHistorySaved(false);
+  }, []);
+
+  const handleSend = useCallback(async () => {
+    const text = inputValue.trim();
+    if (!text || isSending) return;
+
+    setInputValue('');
+    await sendChatPayload(
+      {
+        message: text,
+        subject: chatState.subject,
+        target_subject: chatState.target_subject,
+        step: chatState.step,
+        intent: chatState.intent,
+        level: chatState.level,
+        prerequisite_data: chatState.prerequisite_data,
+        quiz_data: chatState.quiz_data,
+        failed_questions: chatState.failed_questions,
+        current_prereq_index: chatState.current_prereq_index,
+        remediation_mode: chatState.remediation_mode,
+      },
+      { userLabel: text }
+    );
+  }, [chatState, inputValue, isSending, sendChatPayload]);
+
+  const handleIntentClick = useCallback(
+    async (intentLabel: 'prerequisite' | 'test') => {
+      if (isSending) return;
+      if (intentLabel === 'test') {
+        setAttemptHistory([]);
+        setHistorySaved(false);
       }
+      await sendChatPayload(
+        {
+          message: intentLabel,
+          subject: chatState.subject,
+          target_subject: chatState.target_subject,
+          step: chatState.step,
+          intent: chatState.intent,
+          level: chatState.level,
+          prerequisite_data: chatState.prerequisite_data,
+          quiz_data: null,
+          failed_questions: chatState.failed_questions,
+          current_prereq_index: chatState.current_prereq_index,
+          remediation_mode: chatState.remediation_mode,
+        },
+        { userLabel: intentLabel }
+      );
+    },
+    [chatState, isSending, sendChatPayload]
+  );
+
+  const handleLevelClick = useCallback(
+    async (level: 'easy' | 'medium' | 'hard') => {
+      if (isSending) return;
+      await sendChatPayload(
+        {
+          message: level,
+          subject: chatState.subject,
+          target_subject: chatState.target_subject,
+          step: chatState.step,
+          intent: chatState.intent,
+          level: chatState.level,
+          prerequisite_data: chatState.prerequisite_data,
+          quiz_data: null,
+          failed_questions: chatState.failed_questions,
+          current_prereq_index: chatState.current_prereq_index,
+          remediation_mode: chatState.remediation_mode,
+        },
+        { userLabel: level[0].toUpperCase() + level.slice(1) }
+      );
+    },
+    [chatState, isSending, sendChatPayload]
+  );
+
+  const startTestForSubject = useCallback(
+    async (clickedSubject: string) => {
+      if (isSending) return;
+
+      setQuizAnswers({});
+      setQuizResult(null);
+      setAttemptHistory([]);
+      setHistorySaved(false);
+
+      await sendChatPayload(
+        {
+          message: 'test',
+          subject: clickedSubject,
+          target_subject: clickedSubject,
+          step: 'awaiting_intent',
+          intent: null,
+          level: null,
+          prerequisite_data: null,
+          quiz_data: null,
+          failed_questions: [],
+          current_prereq_index: null,
+          remediation_mode: false,
+        },
+        { userLabel: `Selected from flowchart: ${clickedSubject}` }
+      );
+    },
+    [isSending, sendChatPayload]
+  );
+
+  const handleAnswerSelect = useCallback((questionId: string, value: string) => {
+    setQuizAnswers((prev) => ({ ...prev, [questionId]: value }));
+  }, []);
+
+  const evaluateQuiz = useCallback(async () => {
+    if (!chatState.quiz_data || isEvaluating) return;
+
+    const answers = Object.fromEntries(
+      chatState.quiz_data.questions.map((question) => [question.id, quizAnswers[question.id] ?? null])
+    );
+
+    setIsEvaluating(true);
+    try {
+      const { data } = await pythonApi.post<QuizEvaluationResponse>('/evaluate-quiz', {
+        quiz_data: chatState.quiz_data,
+        answers,
+        failed_questions: chatState.failed_questions,
+        prerequisite_data: chatState.prerequisite_data,
+        target_subject: chatState.target_subject,
+        current_prereq_index: chatState.current_prereq_index,
+        remediation_mode: chatState.remediation_mode,
+      });
+
+      setQuizResult(data);
+      setAttemptHistory((prev) => {
+        const currentAttempt: AttemptHistoryItem = {
+          subjectId: chatState.quiz_data?.subject || chatState.subject || 'unknown-subject',
+          subjectName: chatState.quiz_data?.subject || chatState.subject || 'Unknown Subject',
+          difficulty: String(chatState.quiz_data?.level || chatState.level || 'easy').toLowerCase(),
+          score: data.score,
+          total: data.total,
+          weakConcepts: data.results
+            .filter((item) => !item.is_correct)
+            .map((item) => item.concept)
+            .filter((concept, index, array) => !!concept && array.indexOf(concept) === index),
+          answers: data.results.map((item) => ({
+            questionId: item.id,
+            selectedAnswer: item.user_answer || '',
+            isCorrect: item.is_correct,
+          })),
+        };
+
+        const duplicate = prev.some(
+          (item) =>
+            item.subjectName === currentAttempt.subjectName &&
+            item.difficulty === currentAttempt.difficulty &&
+            item.score === currentAttempt.score &&
+            item.total === currentAttempt.total
+        );
+
+        return duplicate ? prev : [...prev, currentAttempt];
+      });
+      setChatState((prev) => ({
+        ...prev,
+        failed_questions: data.failed_questions || prev.failed_questions,
+      }));
+
+      if (data.transition_message) {
+        appendMessage('assistant', data.transition_message);
+      }
+      if (data.quiz_ended && data.feedback) {
+        appendMessage('assistant', 'Feedback is ready in the assessment panel.');
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Quiz evaluation failed on the backend.';
+      appendMessage('assistant', `Evaluation error: ${message}`);
+    } finally {
+      setIsEvaluating(false);
+    }
+  }, [appendMessage, chatState, isEvaluating, quizAnswers]);
+
+  const continueAdaptiveFlow = useCallback(async () => {
+    if (!quizResult?.next_level || isSending) return;
+
+    await sendChatPayload(
+      {
+        message: null,
+        subject: quizResult.next_subject ?? chatState.subject,
+        target_subject: chatState.target_subject,
+        step: 'level_selected',
+        intent: 'test',
+        level: quizResult.next_level,
+        prerequisite_data: chatState.prerequisite_data,
+        quiz_data: null,
+        failed_questions: quizResult.failed_questions ?? chatState.failed_questions,
+        current_prereq_index:
+          quizResult.next_prereq_index ?? chatState.current_prereq_index,
+        remediation_mode:
+          quizResult.next_remediation_mode ?? chatState.remediation_mode,
+      },
+      { preserveResult: false }
+    );
+  }, [chatState, isSending, quizResult, sendChatPayload]);
+
+  useEffect(() => {
+    if (!quizResult?.quiz_ended || !user?.id || historySaved || attemptHistory.length === 0) {
       return;
     }
 
-    if (step === 'choosing_subject') {
-      const subj = mainSubjects.find(s => s.id === value);
-      if (!subj) return;
-      setSelectedSubject(subj);
-      setGraphHighlightArray([value]);
-      addUserMessage(`${subj.icon} ${subj.shortName}`);
-      setStep('choosing_difficulty');
-      setTimeout(() => addAiMessage({
-        content: `${subj.name} — nice choice! Which difficulty level would you like?`,
-        type: 'diff_buttons',
-      }), 350);
-      return;
-    }
+    const mainAttempt = attemptHistory[0];
+    const mappedChain = attemptHistory.map((attempt) => ({
+      subjectId: attempt.subjectId,
+      subjectName: attempt.subjectName,
+      difficulty: attempt.difficulty,
+      score: attempt.score,
+      total: attempt.total,
+      weakConcepts: attempt.weakConcepts,
+    }));
 
-    if (step === 'choosing_difficulty') {
-      const diffMap: Record<string, DifficultyChoice> = { easy: 'easy', intermediate: 'intermediate', hard: 'hard' };
-      const diff = diffMap[value];
-      if (!diff) return;
-      setSelectedDiff(diff);
-      const dfLabels: Record<string, string> = { easy: '🟢 Easy', intermediate: '🟡 Intermediate', hard: '🔴 Hard' };
-      addUserMessage(dfLabels[value]);
-      setStep('ready');
-      setTimeout(() => addAiMessage({
-        content: `Perfect! I've prepared your ${selectedSubject?.shortName} quiz at ${dfLabels[value]} level. Ready when you are!`,
-        type: 'launch',
-      }), 350);
-      return;
-    }
-  }, [step, mainSubjects, selectedSubject, selectedDiff, quizStats, navigate, addAiMessage, addUserMessage]);
-
-  // ── Free-text handler ─────────────────────────────────────────────────────
-  const handleSend = () => {
-    const txt = inputVal.trim();
-    if (!txt) return;
-    setInputVal('');
-    addUserMessage(txt);
-
-    const lower = txt.toLowerCase();
-    setTimeout(() => {
-      if (lower.includes('quiz') || lower.includes('test') || lower.includes('question')) {
-        setStep('choosing_subject');
-        addAiMessage({
-          content: 'Sure! Pick a subject to start your quiz:',
-          type: 'subject_grid',
-          subjects: mainSubjects.filter(s => s.questions.length > 0).slice(0, 12),
+    void api
+      .post('/history', {
+        userId: user.id,
+        subjectId: mainAttempt.subjectId,
+        subjectName: mainAttempt.subjectName,
+        score: mainAttempt.score,
+        totalQuestions: mainAttempt.total,
+        answers: mainAttempt.answers,
+        difficulty: mainAttempt.difficulty,
+        attemptChain: mappedChain,
+      })
+      .then(() => {
+        setHistorySaved(true);
+        setQuizStats((prev) => {
+          const nextTotal = prev.total + 1;
+          const latestPct = mainAttempt.total ? (mainAttempt.score / mainAttempt.total) * 100 : 0;
+          const avgScore =
+            prev.total === 0
+              ? Math.round(latestPct)
+              : Math.round((prev.avgScore * prev.total + latestPct) / nextTotal);
+          return { ...prev, total: nextTotal, avgScore };
         });
-      } else if (lower.includes('weak') || lower.includes('progress') || lower.includes('score')) {
-        addAiMessage({ content: `You've taken ${quizStats.total} quizzes with an average of ${quizStats.avgScore}%. You have ${quizStats.weak} weak subjects. Want to drill on one?`, type: 'chips', chips: [{ label: 'Quiz me', icon: '📝', value: 'quiz' }, { label: 'View History', icon: '📋', value: 'history' }] });
-        setStep('choosing_action');
-      } else if (lower.includes('sem') || lower.includes('semester') || lower.includes('diagnostic')) {
-        addAiMessage({ content: "I'll take you to the Semester Diagnostic now!", type: 'text' });
-        setTimeout(() => navigate('/sem-check'), 700);
-      } else if (lower.includes('history')) {
-        navigate('/history');
-      } else {
-        addAiMessage({ content: `I'm best at guiding you through quizzes and diagnostics! Try asking me to "quiz me on Data Structures" or "show my progress" 😊`, type: 'chips', chips: [{ label: 'Quiz me', icon: '📝', value: 'quiz' }, { label: 'Sem Diagnostic', icon: '🎯', value: 'sem' }, { label: 'My Progress', icon: '📊', value: 'progress' }] });
-        setStep('choosing_action');
-      }
-    }, 400);
-  };
 
-  // ── Graph node click → start quiz via chat ────────────────────────────────
-  const handleGraphNodeClick = useCallback((nodeId: string) => {
-    const subj = mainSubjects.find(s => s.id === nodeId);
-    if (!subj) return;
-    if (subj.questions.length === 0) {
-      addAiMessage({ content: `${subj.name} doesn't have questions yet — it's coming soon! 🚧`, type: 'text' });
-      return;
+        const passed = mainAttempt.total > 0 && mainAttempt.score / mainAttempt.total >= 0.7;
+        const currentWeak = user.weak_subjects || [];
+        const nextWeak = passed
+          ? currentWeak.filter((subjectId) => subjectId !== mainAttempt.subjectId)
+          : Array.from(new Set([...currentWeak, mainAttempt.subjectId]));
+        updateUser({ ...user, weak_subjects: nextWeak });
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : 'Unable to save quiz history.';
+        appendMessage('assistant', `History save error: ${message}`);
+      });
+  }, [appendMessage, attemptHistory, historySaved, quizResult, updateUser, user]);
+
+  const prerequisiteChain = useMemo(() => {
+    const chain: string[] = [];
+    const prerequisites = chatState.prerequisite_data?.prerequisites || [];
+
+    for (const item of prerequisites) {
+      if (item.subject) chain.push(item.subject);
     }
-    setSelectedSubject(subj);
-    setGraphHighlightArray([nodeId]);
-    addUserMessage(`${subj.icon} ${subj.shortName} (from graph)`);
-    setStep('choosing_difficulty');
-    setTimeout(() => addAiMessage({
-      content: `${subj.name} — great pick from the graph! Choose a difficulty level:`,
-      type: 'diff_buttons',
-    }), 350);
-  }, [mainSubjects, addAiMessage, addUserMessage]);
+
+    if (chatState.prerequisite_data?.subject) {
+      chain.push(chatState.prerequisite_data.subject);
+    }
+
+    return chain;
+  }, [chatState.prerequisite_data]);
+
+  const showIntentActions =
+    !!chatState.subject &&
+    chatState.step === 'awaiting_intent' &&
+    !chatState.quiz_data;
+
+  const showDifficultyActions =
+    chatState.intent === 'test' &&
+    chatState.step === 'choose_level' &&
+    !chatState.quiz_data;
+
+  const showFlowchart =
+    chatState.intent === 'flowchart' &&
+    !chatState.quiz_data &&
+    prerequisiteChain.length > 0;
+
+  const quizData = chatState.quiz_data;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--bg-base)' }}>
-
-      {/* ── Top bar ─────────────────────────────────────────────────────────── */}
-      <div ref={headerRef} style={{
-        height: 56, borderBottom: '1px solid var(--border-subtle)',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 28px', background: 'var(--bg-surface)', flexShrink: 0,
-      }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        overflow: 'hidden',
+        background: 'var(--bg-base)',
+      }}
+    >
+      <div
+        ref={headerRef}
+        style={{
+          height: 56,
+          borderBottom: '1px solid var(--border-subtle)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 28px',
+          background: 'var(--bg-surface)',
+          flexShrink: 0,
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-          <span style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--text-primary)', letterSpacing: '-0.3px' }}>
+          <span
+            style={{
+              fontWeight: 800,
+              fontSize: '1rem',
+              color: 'var(--text-primary)',
+              letterSpacing: '-0.3px',
+            }}
+          >
             Study<span style={{ color: 'var(--purple-light)' }}> Workspace</span>
           </span>
           <div style={{ width: 1, height: 24, background: 'var(--border-subtle)' }} />
           <div style={{ display: 'flex', gap: 16 }}>
             {[
               { label: `${quizStats.total} Quizzes`, color: 'var(--purple-light)' },
-              { label: `${quizStats.avgScore}% Avg`, color: quizStats.avgScore >= 70 ? '#22c55e' : quizStats.avgScore >= 50 ? '#f59e0b' : '#ef4444' },
-              { label: `${quizStats.weak} Gaps`, color: quizStats.weak > 0 ? '#ef4444' : '#22c55e' },
-            ].map(stat => (
-              <span key={stat.label} style={{ fontSize: '0.8rem', fontWeight: 700, color: stat.color }}>
+              {
+                label: `${quizStats.avgScore}% Avg`,
+                color:
+                  quizStats.avgScore >= 70
+                    ? '#22c55e'
+                    : quizStats.avgScore >= 50
+                    ? '#f59e0b'
+                    : '#ef4444',
+              },
+              {
+                label: `${quizStats.weak} Gaps`,
+                color: quizStats.weak > 0 ? '#ef4444' : '#22c55e',
+              },
+            ].map((stat) => (
+              <span
+                key={stat.label}
+                style={{ fontSize: '0.8rem', fontWeight: 700, color: stat.color }}
+              >
                 {stat.label}
               </span>
             ))}
           </div>
         </div>
+
         <div style={{ display: 'flex', gap: 8 }}>
-          {[{ to: '/sem-check', label: '🎯 Sem Check' }, { to: '/history', label: '📋 History' }].map(btn => (
-            <button key={btn.to} onClick={() => navigate(btn.to)}
-              style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--purple)'; (e.currentTarget as HTMLElement).style.color = 'var(--purple-light)'; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'; }}>
-              {btn.label}
-            </button>
-          ))}
+          <ActionButton label="History" onClick={() => navigate('/history')} />
+          <ActionButton label="Sem Check" onClick={() => navigate('/sem-check')} />
+          <ActionButton label="Clear Chat" onClick={resetConversation} tone="danger" />
         </div>
       </div>
 
-      {/* ── Content area ────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-
-        {/* ── Center: LLM Chat ──────────────────────────────────────────────── */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border-subtle)', minWidth: 0, overflow: 'hidden' }}>
-
-          {/* Chat header */}
-          <div style={{ padding: '16px 24px 12px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            borderRight: '1px solid var(--border-subtle)',
+            minWidth: 0,
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              padding: '16px 24px 12px',
+              borderBottom: '1px solid var(--border-subtle)',
+              flexShrink: 0,
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px #22c55e' }} />
-              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Study Companion · Active</span>
+              <div
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: '#22c55e',
+                  boxShadow: '0 0 8px #22c55e',
+                }}
+              />
+              <span
+                style={{
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                Study Companion · Python backend connected
+              </span>
             </div>
           </div>
 
-          {/* Messages */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {messages.map(msg => (
-              <Bubble key={msg.id} msg={msg} onChipClick={handleChip} />
+          <div
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '20px 24px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+            }}
+          >
+            {messages.map((message) => (
+              <Bubble key={message.id} message={message} />
             ))}
+            {isSending && (
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                Assistant is thinking...
+              </div>
+            )}
             <div ref={chatEndRef} />
           </div>
 
-          {/* Input */}
-          <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border-subtle)', flexShrink: 0, background: 'var(--bg-surface)' }}>
+          <div
+            style={{
+              padding: '14px 20px',
+              borderTop: '1px solid var(--border-subtle)',
+              flexShrink: 0,
+              background: 'var(--bg-surface)',
+            }}
+          >
             <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-              <input value={inputVal} onChange={e => setInputVal(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                placeholder="Ask me anything — quiz on a topic, check progress…"
-                style={{ flex: 1, padding: '11px 16px', borderRadius: 12, background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: '0.9rem', outline: 'none', transition: 'border-color 0.2s' }}
-                onFocus={e => (e.currentTarget.style.borderColor = 'var(--border-hover)')}
-                onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
-              <button onClick={handleSend}
-                style={{ width: 42, height: 42, borderRadius: 11, border: 'none', background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)', color: 'white', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', boxShadow: '0 4px 16px rgba(139,92,246,0.4)', transition: 'transform 0.15s' }}
-                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.08)')}
-                onMouseLeave={e => (e.currentTarget.style.transform = '')}>
+              <input
+                value={inputValue}
+                onChange={(event) => setInputValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    void handleSend();
+                  }
+                }}
+                placeholder="Type a subject, or reply with prerequisite / test / easy / medium / hard"
+                style={{
+                  flex: 1,
+                  padding: '11px 16px',
+                  borderRadius: 12,
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.9rem',
+                  outline: 'none',
+                }}
+              />
+              <button
+                onClick={() => void handleSend()}
+                disabled={isSending}
+                style={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 11,
+                  border: 'none',
+                  background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+                  color: 'white',
+                  cursor: isSending ? 'not-allowed' : 'pointer',
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '1rem',
+                  boxShadow: '0 4px 16px rgba(139,92,246,0.4)',
+                  opacity: isSending ? 0.7 : 1,
+                }}
+              >
                 ↑
               </button>
             </div>
-            <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: 8, textAlign: 'center' }}>
-              Click nodes in the graph → to instantly start a quiz · Use chips above for guided flow
+            <p
+              style={{
+                fontSize: '0.7rem',
+                color: 'var(--text-faint)',
+                marginTop: 8,
+                textAlign: 'center',
+              }}
+            >
+              The right panel mirrors the Streamlit prerequisite flow, difficulty selector, quiz,
+              and backend scorecard.
             </p>
           </div>
         </div>
 
-        {/* ── Right: Subject Knowledge Graph ───────────────────────────────── */}
-        <div ref={graphRef} style={{ width: 480, display: 'flex', flexDirection: 'column', background: 'var(--bg-base)', overflow: 'hidden', flexShrink: 0 }}>
-          {/* Graph header */}
-          <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div
+          ref={panelRef}
+          style={{
+            width: 520,
+            display: 'flex',
+            flexDirection: 'column',
+            background: 'var(--bg-base)',
+            overflow: 'hidden',
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              padding: '14px 20px 10px',
+              borderBottom: '1px solid var(--border-subtle)',
+              flexShrink: 0,
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 8,
+              }}
+            >
               <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.88rem' }}>
-                🔗 Subject Knowledge Network
+                Dynamic Learning Panel
               </span>
-              {graphHighlightArray.length > 0 && (
-                <button onClick={() => setGraphHighlightArray([])} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer' }}>
-                  Clear ×
-                </button>
+              {chatState.subject && (
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  Current subject: {chatState.subject}
+                </span>
               )}
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {Object.entries(SEM_COLORS).map(([sem, color]) => (
-                <span key={sem} style={{ fontSize: '0.65rem', padding: '2px 8px', borderRadius: 10, border: `1px solid ${color}30`, color, background: `${color}08`, fontWeight: 700 }}>
-                  {SEM_LABELS[sem]}
-                </span>
-              ))}
+              {[
+                chatState.target_subject ? `Target: ${chatState.target_subject}` : null,
+                chatState.level ? `Level: ${chatState.level}` : null,
+                chatState.remediation_mode ? 'Remediation mode' : null,
+                quizResult ? `Score: ${quizResult.score}/${quizResult.total}` : null,
+              ]
+                .filter(Boolean)
+                .map((chip) => (
+                  <span
+                    key={chip}
+                    style={{
+                      fontSize: '0.67rem',
+                      padding: '3px 9px',
+                      borderRadius: 999,
+                      border: '1px solid var(--border)',
+                      color: 'var(--text-secondary)',
+                      background: 'var(--bg-card)',
+                    }}
+                  >
+                    {chip}
+                  </span>
+                ))}
             </div>
           </div>
 
-          {/* Graph SVG */}
-          <div style={{ flex: 1, padding: '8px 4px 8px 4px', overflow: 'hidden' }}>
-            <SubjectGraph onNodeClick={handleGraphNodeClick} highlightPath={graphHighlightArray} />
-          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+            {!chatState.subject && !quizData && (
+              <div
+                style={{
+                  borderRadius: 18,
+                  border: '1px solid var(--border)',
+                  background:
+                    'radial-gradient(circle at top left, rgba(139,92,246,0.16), transparent 45%), var(--bg-card)',
+                  padding: 24,
+                }}
+              >
+                <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                  Learn any subject with structured prerequisites or tests
+                </div>
+                <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: 10 }}>
+                  Start by typing a subject in chat. The backend will normalize spelling, generate a
+                  subject-level prerequisite chain, and drive the full adaptive quiz flow from here.
+                </p>
+              </div>
+            )}
 
-          {/* Graph tip */}
-          <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border-subtle)', flexShrink: 0 }}>
-            <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', textAlign: 'center' }}>
-              👆 Click any node to start a quiz on that subject
-            </p>
+            {showIntentActions && (
+              <div style={{ display: 'grid', gap: 14 }}>
+                <div
+                  style={{
+                    borderRadius: 18,
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-card)',
+                    padding: 20,
+                  }}
+                >
+                  <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                    {chatState.subject}
+                  </div>
+                  <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 8 }}>
+                    Choose whether you want to inspect the prerequisite chain first or jump directly
+                    into the adaptive test flow.
+                  </p>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <ActionButton
+                    label="Show Prerequisites"
+                    onClick={() => void handleIntentClick('prerequisite')}
+                    disabled={isSending}
+                  />
+                  <ActionButton
+                    label="Start Test"
+                    onClick={() => void handleIntentClick('test')}
+                    disabled={isSending}
+                    tone="accent"
+                  />
+                </div>
+              </div>
+            )}
+
+            {showDifficultyActions && (
+              <div style={{ display: 'grid', gap: 14 }}>
+                <div
+                  style={{
+                    borderRadius: 18,
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-card)',
+                    padding: 20,
+                  }}
+                >
+                  <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                    Difficulty selection
+                  </div>
+                  <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 8 }}>
+                    Pick the level for {chatState.subject}. The backend will generate the quiz and
+                    handle all later promotion, fallback, remediation, and feedback logic.
+                  </p>
+                </div>
+
+                <div style={{ display: 'grid', gap: 12 }}>
+                  <ActionButton label="Easy" onClick={() => void handleLevelClick('easy')} disabled={isSending} />
+                  <ActionButton label="Medium" onClick={() => void handleLevelClick('medium')} disabled={isSending} />
+                  <ActionButton label="Hard" onClick={() => void handleLevelClick('hard')} disabled={isSending} />
+                </div>
+              </div>
+            )}
+
+            {showFlowchart && (
+              <div style={{ display: 'grid', gap: 14 }}>
+                <div
+                  style={{
+                    borderRadius: 18,
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-card)',
+                    padding: 20,
+                  }}
+                >
+                  <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                    Prerequisite Flow
+                  </div>
+                  <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 8 }}>
+                    Click any subject in the chain to start the test path for that subject. The rest
+                    of the adaptive process will continue from there.
+                  </p>
+                </div>
+
+                {prerequisiteChain.map((subjectName, index) => {
+                  const why =
+                    chatState.prerequisite_data?.prerequisites.find(
+                      (item) => item.subject === subjectName
+                    )?.why ?? 'Target subject in the current prerequisite path';
+
+                  return (
+                    <div key={`${subjectName}-${index}`} style={{ display: 'grid', gap: 10 }}>
+                      <div
+                        style={{
+                          borderRadius: 16,
+                          border: '1px solid var(--border)',
+                          background: 'var(--bg-card)',
+                          padding: 18,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                          }}
+                        >
+                          <div>
+                            <div
+                              style={{
+                                fontSize: '0.74rem',
+                                color: 'var(--text-muted)',
+                                fontWeight: 700,
+                                letterSpacing: '0.06em',
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              Step {index + 1}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: '1rem',
+                                fontWeight: 800,
+                                color: 'var(--text-primary)',
+                                marginTop: 4,
+                              }}
+                            >
+                              {subjectName}
+                            </div>
+                          </div>
+                          <ActionButton
+                            label={`Test ${subjectName}`}
+                            onClick={() => void startTestForSubject(subjectName)}
+                            disabled={isSending}
+                            tone="accent"
+                          />
+                        </div>
+                        <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 10 }}>
+                          {why}
+                        </p>
+                      </div>
+                      {index < prerequisiteChain.length - 1 && (
+                        <div
+                          style={{
+                            textAlign: 'center',
+                            color: 'var(--text-faint)',
+                            fontSize: '1.35rem',
+                          }}
+                        >
+                          ↓
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {quizData && (
+              <div style={{ display: 'grid', gap: 16 }}>
+                <div
+                  style={{
+                    borderRadius: 18,
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-card)',
+                    padding: 20,
+                  }}
+                >
+                  <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                    MCQ Panel
+                  </div>
+                  <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 8 }}>
+                    Subject: {quizData.subject}
+                    <br />
+                    Level: {quizData.level}
+                  </p>
+                </div>
+
+                {quizData.questions.map((question, index) => (
+                  <div
+                    key={question.id}
+                    style={{
+                      borderRadius: 18,
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg-card)',
+                      padding: 18,
+                    }}
+                  >
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem', fontWeight: 700 }}>
+                      Q{index + 1} · {question.topic} · {question.type}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        color: 'var(--text-primary)',
+                        fontWeight: 700,
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      {question.question}
+                    </div>
+
+                    <div style={{ display: 'grid', gap: 10, marginTop: 14 }}>
+                      {Object.entries(question.options).map(([key, value]) => {
+                        const checked = quizAnswers[question.id] === key;
+                        return (
+                          <label
+                            key={key}
+                            style={{
+                              display: 'flex',
+                              gap: 10,
+                              alignItems: 'flex-start',
+                              borderRadius: 12,
+                              border: checked
+                                ? '1px solid rgba(139,92,246,0.55)'
+                                : '1px solid var(--border)',
+                              background: checked
+                                ? 'rgba(139,92,246,0.09)'
+                                : 'rgba(255,255,255,0.01)',
+                              padding: '10px 12px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <input
+                              type="radio"
+                              name={question.id}
+                              value={key}
+                              checked={checked}
+                              onChange={() => handleAnswerSelect(question.id, key)}
+                              style={{ marginTop: 3 }}
+                            />
+                            <span style={{ color: 'var(--text-primary)', lineHeight: 1.55 }}>
+                              <strong>{key}.</strong> {value}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+
+                <ActionButton
+                  label={isEvaluating ? 'Evaluating...' : 'Submit Quiz'}
+                  onClick={() => void evaluateQuiz()}
+                  disabled={isEvaluating}
+                  tone="accent"
+                />
+              </div>
+            )}
+
+            {quizResult && (
+              <div style={{ display: 'grid', gap: 16, marginTop: quizData ? 20 : 0 }}>
+                <div
+                  style={{
+                    borderRadius: 18,
+                    border: '1px solid var(--border)',
+                    background: quizResult.passed
+                      ? 'rgba(34,197,94,0.08)'
+                      : 'rgba(239,68,68,0.08)',
+                    padding: 20,
+                  }}
+                >
+                  <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                    Scorecard
+                  </div>
+                  <div style={{ marginTop: 10, fontSize: '1.6rem', fontWeight: 900, color: 'var(--text-primary)' }}>
+                    {quizResult.score} / {quizResult.total}
+                  </div>
+                  <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 8 }}>
+                    {quizResult.transition_message}
+                  </p>
+                </div>
+
+                {quizResult.results.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      borderRadius: 16,
+                      border: item.is_correct
+                        ? '1px solid rgba(34,197,94,0.32)'
+                        : '1px solid rgba(239,68,68,0.32)',
+                      background: item.is_correct
+                        ? 'rgba(34,197,94,0.05)'
+                        : 'rgba(239,68,68,0.05)',
+                      padding: 16,
+                    }}
+                  >
+                    <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{item.id}</div>
+                    <div style={{ marginTop: 8, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                      {item.question}
+                    </div>
+                    <div style={{ marginTop: 10, color: item.is_correct ? '#4ade80' : '#f87171' }}>
+                      Your answer: {item.user_answer ?? 'Not answered'}
+                    </div>
+                    {!item.is_correct && (
+                      <div style={{ marginTop: 6, color: '#fca5a5' }}>
+                        Correct answer: {item.correct_answer}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {quizResult.quiz_ended && quizResult.feedback && (() => {
+                  const feedbackSummary = summarizeFeedback(quizResult.feedback);
+
+                  return (
+                    <div
+                      style={{
+                        borderRadius: 18,
+                        border: '1px solid rgba(245,158,11,0.35)',
+                        background: 'rgba(245,158,11,0.08)',
+                        padding: 20,
+                        display: 'grid',
+                        gap: 16,
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                          Weak Areas Feedback
+                        </div>
+                        <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: 8 }}>
+                          Visual summary of the Gemini feedback, built from the full incorrect-answer history.
+                        </p>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                        <div style={{ borderRadius: 14, background: 'rgba(255,255,255,0.04)', padding: 14 }}>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                            Primary Weakness
+                          </div>
+                          <div style={{ marginTop: 6, color: 'var(--text-primary)', fontWeight: 800 }}>
+                            {feedbackSummary.primaryWeakness}
+                          </div>
+                        </div>
+                        <div style={{ borderRadius: 14, background: 'rgba(255,255,255,0.04)', padding: 14 }}>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                            Mistake Load
+                          </div>
+                          <div style={{ marginTop: 6, color: 'var(--text-primary)', fontWeight: 800 }}>
+                            {feedbackSummary.mistakeCount || 'Not specified'}
+                          </div>
+                        </div>
+                        <div style={{ borderRadius: 14, background: 'rgba(255,255,255,0.04)', padding: 14 }}>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                            Pattern Level
+                          </div>
+                          <div style={{ marginTop: 6, color: 'var(--text-primary)', fontWeight: 800 }}>
+                            {feedbackSummary.difficultyPattern || 'Mixed'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {feedbackSummary.highlights.length > 0 && (
+                        <div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                            Focus Concepts
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                            {feedbackSummary.highlights.map((highlight) => (
+                              <span
+                                key={highlight}
+                                style={{
+                                  padding: '6px 10px',
+                                  borderRadius: 999,
+                                  background: 'rgba(139,92,246,0.14)',
+                                  border: '1px solid rgba(139,92,246,0.28)',
+                                  color: '#ddd6fe',
+                                  fontSize: '0.76rem',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {highlight}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div style={{ display: 'grid', gap: 12 }}>
+                        {feedbackSummary.recurringPattern && (
+                          <div style={{ borderRadius: 14, background: 'rgba(255,255,255,0.04)', padding: 14 }}>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                              Recurring Pattern
+                            </div>
+                            <div style={{ marginTop: 8, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                              {feedbackSummary.recurringPattern}
+                            </div>
+                          </div>
+                        )}
+
+                        {feedbackSummary.reviseFirst && (
+                          <div style={{ borderRadius: 14, background: 'rgba(255,255,255,0.04)', padding: 14 }}>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                              Revise First
+                            </div>
+                            <div style={{ marginTop: 8, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                              {feedbackSummary.reviseFirst}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ borderRadius: 14, background: 'rgba(0,0,0,0.14)', padding: 14 }}>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                          Full Feedback
+                        </div>
+                        <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: 8 }}>
+                          {feedbackSummary.cleaned}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {!quizResult.quiz_ended && quizResult.next_level && (
+                  <ActionButton
+                    label={`Continue To ${quizResult.next_level[0].toUpperCase()}${quizResult.next_level.slice(1)}`}
+                    onClick={() => void continueAdaptiveFlow()}
+                    disabled={isSending}
+                    tone="accent"
+                  />
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

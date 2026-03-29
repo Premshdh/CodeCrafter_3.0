@@ -45,26 +45,63 @@ router.get('/user/:id', auth, async (req, res) => {
 // Save a single regular quiz result
 router.post('/history', auth, async (req, res) => {
   try {
-    const { userId, subjectId, score, totalQuestions, answers, difficulty, attemptChain } = req.body;
-
-    const history = new QuizHistory({
+    const {
       userId,
       subjectId,
+      subjectName,
       score,
       totalQuestions,
       answers,
+      difficulty,
+      attemptChain,
+    } = req.body;
+
+    const ownerId = req.user?.id || userId;
+    const normalizedSubjectId = String(subjectId || subjectName || '').trim();
+    const normalizedSubjectName = String(subjectName || subjectId || '').trim() || null;
+    const normalizedDifficulty =
+      difficulty === 'medium' ? 'intermediate' : (difficulty || null);
+    const normalizedAnswers = Array.isArray(answers)
+      ? answers.map((answer) => ({
+          questionId: String(answer?.questionId || '').trim(),
+          selectedAnswer: answer?.selectedAnswer == null ? '' : String(answer.selectedAnswer),
+          isCorrect: Boolean(answer?.isCorrect),
+        })).filter((answer) => answer.questionId)
+      : [];
+    const normalizedAttemptChain = Array.isArray(attemptChain)
+      ? attemptChain.map((attempt) => ({
+          subjectId: String(attempt?.subjectId || attempt?.subjectName || '').trim(),
+          subjectName: String(attempt?.subjectName || attempt?.subjectId || '').trim(),
+          difficulty: attempt?.difficulty === 'medium' ? 'intermediate' : attempt?.difficulty,
+          score: Number(attempt?.score || 0),
+          total: Number(attempt?.total || 0),
+          weakConcepts: Array.isArray(attempt?.weakConcepts) ? attempt.weakConcepts : [],
+        })).filter((attempt) => attempt.subjectId)
+      : [];
+
+    if (!ownerId || !normalizedSubjectId) {
+      return res.status(400).json({ msg: 'userId and subjectId are required' });
+    }
+
+    const history = new QuizHistory({
+      userId: ownerId,
+      subjectId: normalizedSubjectId,
+      subjectName: normalizedSubjectName,
+      score: Number(score || 0),
+      totalQuestions: Number(totalQuestions || 0),
+      answers: normalizedAnswers,
       quizType: 'regular',
-      difficulty: difficulty || null,
-      attemptChain: attemptChain || [],
+      difficulty: normalizedDifficulty,
+      attemptChain: normalizedAttemptChain,
     });
 
     await history.save();
 
-    const threshold = totalQuestions * 0.7;
-    if (score < threshold) {
-      await User.findByIdAndUpdate(userId, { $addToSet: { weak_subjects: subjectId } });
+    const threshold = Number(totalQuestions || 0) * 0.7;
+    if (Number(score || 0) < threshold) {
+      await User.findByIdAndUpdate(ownerId, { $addToSet: { weak_subjects: normalizedSubjectId } });
     } else {
-      await User.findByIdAndUpdate(userId, { $pull: { weak_subjects: subjectId } });
+      await User.findByIdAndUpdate(ownerId, { $pull: { weak_subjects: normalizedSubjectId } });
     }
 
     res.json(history);
