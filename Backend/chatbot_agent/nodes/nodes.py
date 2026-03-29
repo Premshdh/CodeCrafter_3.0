@@ -39,117 +39,111 @@ def router_node(state):
 
     llm = get_llm()
     subject = state.get("subject")
-    message = state.get("message") or ""  # Handle None case
+    message = state.get("message") or ""
     message = message.strip()
     intent = state.get("intent")
     message_lower = message.lower()
 
-    # 1. If no subject yet
+    # 1. If no subject yet - EXTRACT SUBJECT FROM MESSAGE
     if not subject:
-        # If user provided a message, validate if it's a subject using LLM
         if message:
-            validation_prompt = f"""
-Determine if the following input is a valid academic subject, course, or learning topic.
-Valid examples: "Machine Learning", "Python Programming", "Data Structures", "Mathematics", "Physics", "History", "Web Development"
-Invalid examples: "hello", "how are you", "what is this", "prerequisites", "test me", "graph"
+            extraction_prompt = f'''Extract the clean subject name from this input. Return ONLY the subject name, or "INVALID" if none found.
+
+Examples:
+"i want to learn java" → Java
+"python?" → Python  
+"machine learning" → Machine Learning
+"teach me data structures" → Data Structures
+"hi" → INVALID
+"how are you" → INVALID
 
 Input: "{message}"
+Output:'''
+            
+            extracted_subject = llm.invoke(extraction_prompt).content.strip()
+            print(f"🧠 Extracted: '{message}' → '{extracted_subject}'")
 
-Is this a valid subject? Reply with ONLY "yes" or "no".
-"""
-            is_subject = llm.invoke(validation_prompt).content.strip().lower()
-            print(f"🧠 Subject validation: '{message}' → {is_subject}")
-
-            if is_subject == "yes":
+            if extracted_subject == "INVALID" or not extracted_subject:
                 return {
-                    "response": f"""
-Great! You chose **{message}**.
+                    "response": f"⚠️ Please enter a valid subject name (e.g., 'Machine Learning', 'Python', 'Java').",
+                    "step": "get_subject",
+                    "subject": None,
+                    "intent": None
+                }
+            
+            # Return extracted subject and ask for options
+            return {
+                "response": f"""Great! You chose **{extracted_subject}**.
 
 Do you want:
 📊 View prerequisite graph (JSON with subjects & dependencies)
 📝 Take a practice test  
 
 Just tell me naturally 🙂
-(e.g., "show prerequisites", "graph", "dependencies", "quiz me")
-""",
-                    "step": "awaiting_intent",
-                    "subject": message  # Store the validated subject!
-                }
-            else:
-                return {
-                    "response": f"⚠️ '{message}' doesn't seem to be a valid subject. Please enter a valid subject name (e.g., 'Machine Learning', 'Python', 'Data Structures').",
-                    "step": "get_subject",
-                    "subject": None
-                }
+(e.g., "show prerequisites", "graph", "dependencies", "quiz me")""",
+                "step": "awaiting_intent",
+                "subject": extracted_subject,  # CLEAN EXTRACTED SUBJECT
+                "intent": None
+            }
         else:
-            # No message provided, ask for subject
             return {
                 "response": "📘 What subject would you like to learn?",
-                "step": "get_subject"
+                "step": "get_subject",
+                "subject": None,
+                "intent": None
             }
 
-    # 2. If subject exists and message matches subject (confirmation step)
-    if subject and not intent and message_lower == subject.lower():
-        return {
-            "response": f"""
-Great! You chose **{subject}**.
+    # 2. Subject exists, no intent yet - CLASSIFY INTENT
+    if subject and not intent:
+        # Check if message is just confirming the subject again
+        if message_lower == subject.lower():
+            return {
+                "response": f"""You already selected **{subject}**.
 
 Do you want:
-📊 View prerequisite graph (JSON with subjects & dependencies)
-📝 Take a practice test  
+📊 View prerequisite graph
+📝 Take a practice test
 
-Just tell me naturally 🙂
-(e.g., "show prerequisites", "graph", "dependencies", "quiz me")
-""",
-            "step": "awaiting_intent",
-            "subject": subject
-        }
-
-    # 3. If subject exists and user sent a new message (intent classification)
-    if subject and not intent:
-        # KEYWORD-BASED ROUTING (Fast path)
+What would you like?""",
+                "step": "awaiting_intent",
+                "subject": subject,
+                "intent": None
+            }
+        
+        # KEYWORD-BASED ROUTING
         flowchart_keywords = ["prerequisite", "prerequisites", "flowchart", "graph", 
-                             "dependencies", "roadmap", "structure", "path", "flow chart"]
-        test_keywords = ["test", "quiz", "question", "questions", "exam", "practice", 
-                        "assessment", "mock test"]
+                             "dependencies", "roadmap", "structure", "path"]
+        test_keywords = ["test", "quiz", "question", "questions", "exam", "practice"]
         
         detected_intent = None
         
-        # Check for flowchart keywords
         if any(keyword in message_lower for keyword in flowchart_keywords):
             detected_intent = "flowchart"
-            print(f"🎯 Keyword match: '{message}' → flowchart")
-        
-        # Check for test keywords  
         elif any(keyword in message_lower for keyword in test_keywords):
             detected_intent = "test"
-            print(f"🎯 Keyword match: '{message}' → test")
-        
-        # If no keyword match, use LLM classifier
-        if not detected_intent:
-            prompt = f"""
-You are an intent classifier.
+        else:
+            # LLM fallback
+            prompt = f'''Classify intent: "{message}"
+Options: flowchart (for prerequisites/graph) or test (for quiz/questions)
+Return ONLY one word.'''
+            detected_intent = llm.invoke(prompt).content.strip().lower()
 
-User message:
-"{message}"
-
-Classify into:
-- flowchart (if user wants prerequisites, graph, dependencies, roadmap)
-- test (if user wants quiz, test, questions)
-
-Return ONLY one word.
-"""
-            result = llm.invoke(prompt).content.strip().lower()
-            print("🧠 LLM Intent:", result)
-            detected_intent = result
+        print(f"🎯 Intent: {message} → {detected_intent}")
 
         return {
             "subject": subject,
             "intent": detected_intent,
-            "step": "intent_classified"
+            "step": "intent_classified",
+            "message": message
         }
 
-    return state
+    # 3. Both subject and intent exist - return state
+    return {
+        "subject": subject,
+        "intent": intent,
+        "step": state.get("step", "end"),
+        "message": message
+    }
 
 
 # ---------------- GRAPH NODE (TRIGGERS /json API) ---------------- #

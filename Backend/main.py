@@ -30,8 +30,9 @@ class JsonRequest(BaseModel):
 
 @app.post("/chat")
 def chat(req: ChatRequest):
+
     state = {
-        "subject": req.subject,
+        "subject": req.subject if req.subject else None,
         "message": req.message,
         "intent": None,
         "step": "start"
