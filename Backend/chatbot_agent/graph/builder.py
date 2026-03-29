@@ -19,14 +19,14 @@ def build_graph():
         print("\n🧭 [ROUTING DECISION]")
         print(f"STATE → {state}")
 
-        if state.get("step") in ["get_subject", "awaiting_intent"]:
+        if state.get("step") in ["get_subject", "awaiting_intent", "choose_level"]:
             return END
 
         intent = state.get("intent")
 
         if intent == "flowchart":
             return "flowchart"
-        elif intent == "test":
+        elif intent == "test" and state.get("step") == "level_selected":
             return "test"
 
         return END
