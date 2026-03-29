@@ -200,7 +200,7 @@ function Bubble({ message }: { message: ChatMessage }) {
           borderRadius: isAssistant ? '8px 16px 16px 16px' : '16px 8px 16px 16px',
           background: isAssistant ? 'var(--bg-card)' : 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
           border: isAssistant ? '1px solid var(--border)' : 'none',
-          color: 'var(--text-primary)',
+          color: isAssistant ? 'var(--text-primary)' : '#ffffff',
           lineHeight: 1.6,
           fontSize: '0.92rem',
           whiteSpace: 'pre-wrap',
@@ -843,8 +843,60 @@ export default function DashboardPage() {
               display: 'flex',
               flexDirection: 'column',
               gap: 16,
+              position: 'relative',
+              background:
+                'linear-gradient(180deg, rgba(255,255,255,0.18), rgba(244,247,251,0.38) 24%, rgba(244,247,251,0.72) 100%)',
             }}
           >
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                backgroundImage:
+                  'linear-gradient(rgba(109,94,252,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(109,94,252,0.035) 1px, transparent 1px)',
+                backgroundSize: '34px 34px',
+                pointerEvents: 'none',
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                top: -40,
+                left: -20,
+                width: 180,
+                height: 180,
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(109,94,252,0.14), transparent 70%)',
+                animation: 'float 8s ease-in-out infinite',
+                pointerEvents: 'none',
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                right: -30,
+                top: 120,
+                width: 150,
+                height: 150,
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(56,189,248,0.12), transparent 72%)',
+                animation: 'float 11s ease-in-out infinite reverse',
+                pointerEvents: 'none',
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                left: '32%',
+                bottom: 20,
+                width: 170,
+                height: 170,
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(167,139,250,0.1), transparent 72%)',
+                animation: 'float 9s ease-in-out infinite 1s',
+                pointerEvents: 'none',
+              }}
+            />
             {messages.map((message) => (
               <Bubble key={message.id} message={message} />
             ))}
@@ -1071,22 +1123,413 @@ export default function DashboardPage() {
               <div style={{ display: 'grid', gap: 14 }}>
                 <div
                   style={{
-                    borderRadius: 18,
+                    borderRadius: 22,
                     border: '1px solid var(--border)',
-                    background: 'var(--bg-card)',
-                    padding: 20,
+                    background:
+                      'linear-gradient(145deg, rgba(109,94,252,0.12), rgba(255,255,255,0.96) 36%, rgba(255,255,255,0.98) 100%)',
+                    padding: 22,
+                    boxShadow: '0 22px 44px rgba(148,163,184,0.16)',
                   }}
                 >
-                  <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                    Prerequisite Flow
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 16,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <div>
+                      <div
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '5px 11px',
+                          borderRadius: 999,
+                          background: 'rgba(109,94,252,0.1)',
+                          color: 'var(--purple-dark)',
+                          fontSize: '0.72rem',
+                          fontWeight: 800,
+                          letterSpacing: '0.06em',
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        Learning Roadmap
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '1.08rem',
+                          fontWeight: 800,
+                          color: 'var(--text-primary)',
+                          marginTop: 12,
+                        }}
+                      >
+                        Prerequisite Flow
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      <span
+                        style={{
+                          padding: '6px 10px',
+                          borderRadius: 999,
+                          background: 'rgba(255,255,255,0.76)',
+                          border: '1px solid var(--border)',
+                          fontSize: '0.72rem',
+                          color: 'var(--text-secondary)',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {prerequisiteChain.length} stages
+                      </span>
+                      {chatState.prerequisite_data?.subject && (
+                        <span
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 999,
+                            background: 'rgba(255,255,255,0.76)',
+                            border: '1px solid var(--border)',
+                            fontSize: '0.72rem',
+                            color: 'var(--text-secondary)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          Target: {chatState.prerequisite_data.subject}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 8 }}>
                     Click any subject in the chain to start the test path for that subject. The rest
                     of the adaptive process will continue from there.
                   </p>
+                  <div style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {prerequisiteChain.map((subjectName, index) => (
+                      <div
+                        key={`chip-${subjectName}-${index}`}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '8px 12px',
+                          borderRadius: 999,
+                          background:
+                            index === prerequisiteChain.length - 1
+                              ? 'linear-gradient(135deg, rgba(109,94,252,0.14), rgba(79,70,229,0.16))'
+                              : 'rgba(255,255,255,0.82)',
+                          border:
+                            index === prerequisiteChain.length - 1
+                              ? '1px solid rgba(109,94,252,0.24)'
+                              : '1px solid var(--border-subtle)',
+                          color:
+                            index === prerequisiteChain.length - 1
+                              ? 'var(--purple-dark)'
+                              : 'var(--text-secondary)',
+                          fontSize: '0.76rem',
+                          fontWeight: 700,
+                        }}
+                      >
+                        <span>{index + 1}</span>
+                        <span>{subjectName}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
-                {prerequisiteChain.map((subjectName, index) => {
+                <div
+                  style={{
+                    position: 'relative',
+                    display: 'grid',
+                    gap: 18,
+                    justifyItems: 'center',
+                    padding: '36px 18px 28px',
+                    borderRadius: 32,
+                    overflow: 'hidden',
+                    background:
+                      'radial-gradient(circle at top, rgba(255,255,255,0.92), rgba(230,241,255,0.9) 52%, rgba(220,234,252,0.96) 100%)',
+                    border: '1px solid rgba(109,94,252,0.12)',
+                    boxShadow:
+                      'inset 0 1px 0 rgba(255,255,255,0.84), 0 24px 42px rgba(148,163,184,0.14), 0 0 0 1px rgba(255,255,255,0.4)',
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 12,
+                      borderRadius: 26,
+                      border: '1px dashed rgba(79,111,143,0.12)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      backgroundImage:
+                        'linear-gradient(rgba(79,111,143,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(79,111,143,0.06) 1px, transparent 1px)',
+                      backgroundSize: '36px 36px',
+                      maskImage: 'linear-gradient(180deg, rgba(0,0,0,0.85), rgba(0,0,0,0.35))',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 26,
+                      right: 32,
+                      width: 180,
+                      height: 180,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(79,111,143,0.12)',
+                      boxShadow: '0 0 0 18px rgba(79,111,143,0.04), 0 0 0 36px rgba(79,111,143,0.025)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: 48,
+                      left: 26,
+                      width: 110,
+                      height: 110,
+                      borderRadius: '50%',
+                      border: '1px solid rgba(79,111,143,0.1)',
+                      boxShadow: '0 0 0 14px rgba(79,111,143,0.03)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 40,
+                      left: '50%',
+                      width: 120,
+                      height: 2,
+                      transform: 'translateX(-50%)',
+                      background:
+                        'linear-gradient(90deg, transparent, rgba(79,111,143,0.26), transparent)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: -40,
+                      left: -30,
+                      width: 180,
+                      height: 180,
+                      borderRadius: '50%',
+                      background: 'radial-gradient(circle, rgba(109,94,252,0.18), transparent 68%)',
+                      animation: 'float 8s ease-in-out infinite',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      right: -20,
+                      top: 120,
+                      width: 150,
+                      height: 150,
+                      borderRadius: '50%',
+                      background: 'radial-gradient(circle, rgba(56,189,248,0.18), transparent 70%)',
+                      animation: 'float 10s ease-in-out infinite reverse',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: '38%',
+                      bottom: -40,
+                      width: 170,
+                      height: 170,
+                      borderRadius: '50%',
+                      background: 'radial-gradient(circle, rgba(167,139,250,0.14), transparent 72%)',
+                      animation: 'float 7s ease-in-out infinite 1.2s',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '22%',
+                      left: '16%',
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: 'rgba(79,111,143,0.22)',
+                      boxShadow:
+                        '52px 16px 0 rgba(79,111,143,0.14), 132px -10px 0 rgba(109,94,252,0.18), 198px 38px 0 rgba(56,189,248,0.16), 260px -6px 0 rgba(79,111,143,0.14)',
+                      animation: 'pulse-ring 4.6s ease-in-out infinite',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: '18%',
+                      right: '16%',
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: 'rgba(109,94,252,0.22)',
+                      boxShadow:
+                        '-46px 26px 0 rgba(79,111,143,0.14), -118px -10px 0 rgba(56,189,248,0.16), -170px 44px 0 rgba(79,111,143,0.12)',
+                      animation: 'pulse-ring 5.2s ease-in-out infinite 1.2s',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background:
+                        'linear-gradient(180deg, rgba(255,255,255,0.28), transparent 26%, transparent 74%, rgba(109,94,252,0.05))',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  {prerequisiteChain.map((subjectName, index) => {
+                    const isTarget = index === prerequisiteChain.length - 1;
+                    const why =
+                      chatState.prerequisite_data?.prerequisites.find(
+                        (item) => item.subject === subjectName
+                      )?.why ?? 'Target subject in the current prerequisite path';
+
+                    return (
+                      <div
+                        key={`roadmap-${subjectName}-${index}`}
+                        style={{
+                          display: 'grid',
+                          justifyItems: 'center',
+                          gap: 10,
+                          width: '100%',
+                        }}
+                      >
+                        <button
+                          onClick={() => void startTestForSubject(subjectName)}
+                          disabled={isSending}
+                          style={{
+                            width: 'min(100%, 250px)',
+                            borderRadius: 20,
+                            border: '2px solid #4f6f8f',
+                            background: isTarget
+                              ? 'linear-gradient(180deg, #d0f0ff 0%, #aad8ff 54%, #96c8f3 100%)'
+                              : 'linear-gradient(180deg, #dcf2ff 0%, #b9e1ff 52%, #a5d4fb 100%)',
+                            padding: '14px 16px',
+                            boxShadow:
+                              '0 12px 0 rgba(79,111,143,0.08), 0 18px 30px rgba(148,163,184,0.16), inset 0 1px 0 rgba(255,255,255,0.72)',
+                            cursor: isSending ? 'not-allowed' : 'pointer',
+                            opacity: isSending ? 0.65 : 1,
+                            textAlign: 'inherit',
+                            position: 'relative',
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <div
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              background:
+                                'linear-gradient(180deg, rgba(255,255,255,0.34), transparent 42%, transparent)',
+                              pointerEvents: 'none',
+                            }}
+                          />
+                          <div
+                            style={{
+                              display: 'grid',
+                              justifyItems: 'center',
+                              textAlign: 'center',
+                              gap: 10,
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                padding: '4px 10px',
+                                borderRadius: 999,
+                                background: 'rgba(255,255,255,0.54)',
+                                border: '1px solid rgba(79,111,143,0.22)',
+                                color: '#36516d',
+                                fontSize: '0.7rem',
+                                fontWeight: 800,
+                                letterSpacing: '0.05em',
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              {isTarget ? 'Target Subject' : `Step ${index + 1}`}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: '1rem',
+                                fontWeight: 800,
+                                color: '#1f3347',
+                                lineHeight: 1.3,
+                              }}
+                            >
+                              {subjectName}
+                            </div>
+                            <button
+                              type="button"
+                              style={{
+                                padding: '8px 12px',
+                                borderRadius: 12,
+                                border: '1px solid rgba(54,81,109,0.18)',
+                                background: 'rgba(255,255,255,0.78)',
+                                color: '#284561',
+                                fontWeight: 800,
+                                fontSize: '0.78rem',
+                                cursor: 'inherit',
+                                boxShadow: '0 8px 18px rgba(79,111,143,0.12)',
+                                pointerEvents: 'none',
+                              }}
+                            >
+                              Start Test
+                            </button>
+                          </div>
+                          <p
+                            style={{
+                              color: '#4e6278',
+                              lineHeight: 1.55,
+                              marginTop: 12,
+                              fontSize: '0.82rem',
+                              textAlign: 'center',
+                            }}
+                          >
+                            {why}
+                          </p>
+                        </button>
+                        {index < prerequisiteChain.length - 1 && (
+                          <div
+                            style={{
+                              display: 'grid',
+                              justifyItems: 'center',
+                              gap: 2,
+                              color: '#4f6f8f',
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 2,
+                                height: 24,
+                                background: 'rgba(79,111,143,0.6)',
+                              }}
+                            />
+                            <div style={{ fontSize: '1rem', lineHeight: 1 }}>
+                              ↓
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {false && prerequisiteChain.map((subjectName, index) => {
                   const why =
                     chatState.prerequisite_data?.prerequisites.find(
                       (item) => item.subject === subjectName
