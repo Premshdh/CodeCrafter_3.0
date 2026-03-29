@@ -21,6 +21,7 @@ class ApiService {
   String? get userId => _userId;
 
   void setToken(String token, String? userId) {
+    debugPrint("[ApiService] Setting Token: \${token.substring(0, 10)}... UserID: \$userId");
     _token = token;
     _userId = userId;
     _dio.options.headers['x-auth-token'] = token;
@@ -28,74 +29,84 @@ class ApiService {
 
   /// AUTH: Login
   Future<Map<String, dynamic>> login(String email, String password) async {
+    debugPrint("[ApiService] Attempting Login for: \$email");
     try {
-      final response = await _dio.post('$_expressBase/auth/login', data: {
+      final response = await _dio.post('\$_expressBase/auth/login', data: {
         'email': email,
         'password': password,
       });
+      debugPrint("[ApiService] Login Response: \${response.data}");
       if (response.data['token'] != null) {
         setToken(response.data['token'], response.data['user']['id']);
       }
       return response.data;
     } catch (e) {
-      debugPrint('Login error: $e');
-      throw Exception('Login failed: $e');
+      debugPrint('[ApiService] Login error: \$e');
+      throw Exception('Login failed: \$e');
     }
   }
 
   /// AUTH: Register
   Future<Map<String, dynamic>> register(String name, String email, String password) async {
+    debugPrint("[ApiService] Attempting Registration for: \$email");
     try {
-      final response = await _dio.post('$_expressBase/auth/register', data: {
+      final response = await _dio.post('\$_expressBase/auth/register', data: {
         'name': name,
         'email': email,
         'password': password,
       });
+      debugPrint("[ApiService] Register Response: \${response.data}");
       if (response.data['token'] != null) {
         setToken(response.data['token'], response.data['user']['id']);
       }
       return response.data;
     } catch (e) {
-      debugPrint('Registration error: $e');
-      throw Exception('Registration failed: $e');
+      debugPrint('[ApiService] Registration error: \$e');
+      throw Exception('Registration failed: \$e');
     }
   }
 
   /// AUTH: Google Login
   Future<Map<String, dynamic>> loginWithGoogle(String idToken) async {
+    debugPrint("[ApiService] Attempting Google Login");
     try {
-      final response = await _dio.post('$_expressBase/auth/google', data: {
+      final response = await _dio.post('\$_expressBase/auth/google', data: {
         'token': idToken,
       });
+      debugPrint("[ApiService] Google Login Response: \${response.data}");
       if (response.data['token'] != null) {
         setToken(response.data['token'], response.data['user']['id']);
       }
       return response.data;
     } catch (e) {
-      debugPrint('Google Login error: $e');
-      throw Exception('Google login failed: $e');
+      debugPrint('[ApiService] Google Login error: \$e');
+      throw Exception('Google login failed: \$e');
     }
   }
 
   /// NODE.JS: Fetches all available quiz subjects (for mapping)
   Future<List<Map<String, dynamic>>> fetchAllQuizSubjects() async {
+    debugPrint("[ApiService] Fetching all quiz subjects from Node.js");
     try {
-      final response = await _dio.get('$_expressBase/quiz/subjects');
+      final response = await _dio.get('\$_expressBase/quiz/subjects');
+      debugPrint("[ApiService] Fetch Subjects Response Status: \${response.statusCode}");
       if (response.statusCode == 200) {
         final List subjects = response.data['subjects'] ?? [];
         return subjects.map((s) => s as Map<String, dynamic>).toList();
       }
       return [];
     } catch (e) {
-      debugPrint('Error fetching all subjects: $e');
+      debugPrint('[ApiService] Error fetching all subjects: \$e');
       return [];
     }
   }
 
   /// NODE.JS: Fetches Static Quiz Data
   Future<QuizData> fetchQuizData(String subjectId) async {
+    debugPrint("[ApiService] Fetching quiz data for: \$subjectId");
     try {
-      final response = await _dio.get('$_expressBase/quiz/subjects/$subjectId');
+      final response = await _dio.get('\$_expressBase/quiz/subjects/\$subjectId');
+      debugPrint("[ApiService] Fetch Quiz Data Response Status: \${response.statusCode}");
       if (response.statusCode == 200) {
         return QuizData.fromJson(response.data);
       } else {
@@ -103,10 +114,11 @@ class ApiService {
       }
     } catch (e) {
       if (e is DioException && e.response?.statusCode == 404) {
+        debugPrint("[ApiService] Quiz data not found (404)");
         throw Exception('404');
       }
-      debugPrint('Error (fetchQuizData): $e');
-      throw Exception('Failed to connect to Node server: $e');
+      debugPrint('[ApiService] Error (fetchQuizData): \$e');
+      throw Exception('Failed to connect to Node server: \$e');
     }
   }
 
@@ -119,8 +131,9 @@ class ApiService {
     required List<Map<String, dynamic>> answers,
     String? difficulty,
   }) async {
+    debugPrint("[ApiService] Saving quiz history for \$userId on \$subjectId (Score: \$score/\$totalQuestions)");
     try {
-      await _dio.post('$_expressBase/history', data: {
+      final response = await _dio.post('\$_expressBase/history', data: {
         'userId': userId,
         'subjectId': subjectId,
         'score': score,
@@ -128,25 +141,29 @@ class ApiService {
         'answers': answers,
         'difficulty': difficulty,
       });
+      debugPrint("[ApiService] Save History Response: \${response.statusCode}");
     } catch (e) {
-      debugPrint('Error saving history: $e');
+      debugPrint('[ApiService] Error saving history: \$e');
     }
   }
 
   /// FASTAPI: Fetches Prerequisite Graph
   Future<SubjectData> fetchSubjectData(String subject) async {
+    debugPrint("[ApiService] Fetching prerequisite graph for: \$subject");
     try {
       final response = await _dio.post(
-        '$_fastApiBase/json',
+        '\$_fastApiBase/json',
         data: {'subject': subject},
       );
+      debugPrint("[ApiService] Fetch Graph Response Status: \${response.statusCode}");
       if (response.statusCode == 200) {
         final graphData = response.data['prerequisite_data'];
         return SubjectData.fromJson(graphData ?? response.data);
       }
       throw Exception('Failed to load graph');
     } catch (e) {
-      throw Exception('Failed to connect to FastAPI: $e');
+      debugPrint("[ApiService] Error (fetchSubjectData): \$e");
+      throw Exception('Failed to connect to FastAPI: \$e');
     }
   }
 
@@ -159,9 +176,10 @@ class ApiService {
     String? level,
     Map<String, dynamic>? prerequisiteData,
   }) async {
+    debugPrint("[ApiService] Chat Request: msg=\$message, subj=\$subject, step=\$step, intent=\$intent, level=\$level");
     try {
       final response = await _dio.post(
-        '$_fastApiBase/chat',
+        '\$_fastApiBase/chat',
         data: {
           'message': message,
           'subject': subject,
@@ -171,9 +189,11 @@ class ApiService {
           'prerequisite_data': prerequisiteData,
         },
       );
+      debugPrint("[ApiService] Chat Response Status: \${response.statusCode}");
       return response.data;
     } catch (e) {
-      throw Exception('Chat connection failed: $e');
+      debugPrint("[ApiService] Error (chat): \$e");
+      throw Exception('Chat connection failed: \$e');
     }
   }
 
@@ -187,9 +207,10 @@ class ApiService {
     int? currentPrereqIndex,
     bool? remediationMode,
   }) async {
+    debugPrint("[ApiService] Evaluating Quiz for: \${quizData['subject']}");
     try {
       final response = await _dio.post(
-        '$_fastApiBase/evaluate-quiz',
+        '\$_fastApiBase/evaluate-quiz',
         data: {
           'quiz_data': quizData,
           'answers': answers,
@@ -200,9 +221,10 @@ class ApiService {
           'remediation_mode': remediationMode,
         },
       );
+      debugPrint("[ApiService] Evaluation Response Status: \${response.statusCode}");
       return response.data;
     } catch (e) {
-      debugPrint('Evaluation error: $e');
+      debugPrint('[ApiService] Evaluation error: \$e');
       throw Exception('Failed to evaluate quiz');
     }
   }

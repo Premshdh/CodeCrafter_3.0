@@ -27,11 +27,13 @@ class _ChatViewState extends State<ChatView> {
   @override
   void initState() {
     super.initState();
+    debugPrint("[ChatView] Initializing with subject: \${widget.initialSubject}");
     _currentSubject = widget.initialSubject;
     _addSystemMessage("Hello! I'm your Learning Assistant. What would you like to learn today?");
   }
 
   void _addSystemMessage(String text) {
+    debugPrint("[ChatView] Adding system message: \$text");
     setState(() {
       _messages.add({"role": "assistant", "content": text});
     });
@@ -53,6 +55,7 @@ class _ChatViewState extends State<ChatView> {
     final userMessage = overrideMessage ?? _controller.text;
     if (userMessage.trim().isEmpty) return;
 
+    debugPrint("[ChatView] _sendMessage: \$userMessage");
     setState(() {
       if (overrideMessage == null) {
         _messages.add({"role": "user", "content": userMessage});
@@ -63,6 +66,7 @@ class _ChatViewState extends State<ChatView> {
     _scrollToBottom();
 
     try {
+      debugPrint("[ChatView] Requesting AI response for subject: \$_currentSubject");
       final response = await _apiService.chat(
         message: userMessage, 
         subject: _currentSubject,
@@ -70,9 +74,11 @@ class _ChatViewState extends State<ChatView> {
         prerequisiteData: _lastPrerequisiteData,
       );
       
+      debugPrint("[ChatView] AI Response received: \$response");
       _currentSubject = response['subject'] ?? _currentSubject;
       _currentStep = response['step'];
       if (response['prerequisite_data'] != null) {
+        debugPrint("[ChatView] Prerequisite data found in response");
         _lastPrerequisiteData = response['prerequisite_data'];
       }
 
@@ -89,6 +95,7 @@ class _ChatViewState extends State<ChatView> {
 
       // AUTO-NAVIGATION: If the AI generated a quiz, open it immediately
       if (response['quiz_data'] != null && mounted) {
+        debugPrint("[ChatView] Quiz data detected, auto-launching SubjectQuiz");
         final quizData = QuizData.fromJson(response['quiz_data']);
         Navigator.push(context, MaterialPageRoute(builder: (context) => SubjectQuiz(
           subjectId: _currentSubject ?? 'gen', 
@@ -99,6 +106,7 @@ class _ChatViewState extends State<ChatView> {
       }
 
     } catch (e) {
+      debugPrint("[ChatView] Error in _sendMessage: \$e");
       setState(() {
         _messages.add({"role": "assistant", "content": "Sorry, I'm having trouble connecting. Please try again."});
         _isLoading = false;
@@ -119,6 +127,7 @@ class _ChatViewState extends State<ChatView> {
         actions: [
           IconButton(
             onPressed: () {
+              debugPrint("[ChatView] Resetting session");
               setState(() {
                 _messages.clear();
                 _currentSubject = null;
@@ -190,6 +199,7 @@ class _ChatViewState extends State<ChatView> {
     // View Roadmap Button (Purple)
     if (data['prerequisite_data'] != null) {
       buttons.add(_actionButton("View Roadmap", Icons.map_outlined, const Color(0xFF8B5CF6), () {
+         debugPrint("[ChatView] View Roadmap clicked for \$subjectName");
          final roadmapData = SubjectData.fromJson(data['prerequisite_data']);
          Navigator.push(context, MaterialPageRoute(builder: (context) => SubjectDependencyGraph(
            subjectName: subjectName ?? "Subject",
@@ -201,6 +211,7 @@ class _ChatViewState extends State<ChatView> {
     // Test Me Button (Orange - Navigation to Quiz)
     if (subjectName != null && data['step'] != 'get_subject') {
       buttons.add(_actionButton("Test Me", Icons.quiz_outlined, Colors.orange, () {
+         debugPrint("[ChatView] Test Me clicked for \$subjectName");
          final quizData = data['quiz_data'] != null ? QuizData.fromJson(data['quiz_data']) : null;
          Navigator.push(context, MaterialPageRoute(builder: (context) => SubjectQuiz(
            subjectId: subjectName, 
@@ -249,7 +260,13 @@ class _ChatViewState extends State<ChatView> {
             ),
           ),
           const SizedBox(width: 8),
-          IconButton(onPressed: () => _sendMessage(), icon: const Icon(Icons.send_rounded, color: Color(0xFF8B5CF6))),
+          IconButton(
+            onPressed: () {
+              debugPrint("[ChatView] Send button pressed");
+              _sendMessage();
+            }, 
+            icon: const Icon(Icons.send_rounded, color: Color(0xFF8B5CF6))
+          ),
         ],
       ),
     );
