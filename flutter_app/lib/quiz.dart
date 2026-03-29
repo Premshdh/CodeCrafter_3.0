@@ -49,71 +49,59 @@ class _SubjectQuizState extends State<SubjectQuiz> {
     setState(() {
       _isLoading = true;
     });
-    
-    // Using Dummy Data for UI testing
-    await Future.delayed(const Duration(seconds: 1)); // Simulate network delay
-    
-    final dummyData = QuizData(
-      section: "Testing Section",
-      questions: [
-        Question(
-          questionText: "What is the result of 2 + 2?",
-          options: ["3", "4", "5", "6"],
-          answerIndex: 1,
-          type: QuestionType.mcq,
-        ),
-        Question(
-          questionText: "Which keyword is used to define a class in Python?",
-          correctAnswer: "class",
-          type: QuestionType.text,
-          options: [],
-          answerIndex: 0,
-        ),
-        Question(
-          questionText: "What is the time complexity of searching in a Hash Map (average case)?",
-          code: "map.get(key);",
-          language: "java",
-          correctAnswer: "O(1)",
-          type: QuestionType.text,
-          options: [],
-          answerIndex: 0,
-        ),
-        Question(
-          questionText: "Which of these is a statically typed language?",
-          options: ["Python", "JavaScript", "Java", "Ruby"],
-          answerIndex: 2,
-          type: QuestionType.mcq,
-        ),
-      ],
-    );
+
+    // Mock API response from the provided JSON
+    final mockJsonResponse = {
+      "subject": "Physics",
+      "topic": "Dual Nature of Radiation and Matter",
+      "questions": [
+        {
+          "id": "PHY_DUAL_1",
+          "concept": "Photoelectric Effect",
+          "difficulty": "Easy",
+          "type": "MCQ",
+          "question": "Who explained the photoelectric effect using quantum theory?",
+          "options": ["Isaac Newton", "Albert Einstein", "Max Planck", "Niels Bohr"],
+          "answer": "Albert Einstein",
+          "explanation": "Einstein explained the photoelectric effect by proposing that light consists of photons."
+        },
+        {
+          "id": "PHY_DUAL_2",
+          "concept": "Photoelectric Effect",
+          "difficulty": "Easy",
+          "type": "Short Answer",
+          "question": "Define photoelectric effect.",
+          "answer": "Emission of electrons from a metal surface when light of sufficient frequency falls on it.",
+          "explanation": "When photons strike a metal surface, electrons are emitted."
+        },
+        {
+          "id": "PHY_DUAL_6",
+          "concept": "Photoelectric Effect",
+          "difficulty": "Medium",
+          "type": "TrueFalse",
+          "question": "Increasing light intensity increases the kinetic energy of emitted electrons.",
+          "answer": "False",
+          "explanation": "Kinetic energy depends on frequency, not intensity."
+        },
+        {
+          "id": "PHY_DUAL_4",
+          "concept": "Photoelectric Equation",
+          "difficulty": "Medium",
+          "type": "Numeric",
+          "question": "Write Einstein's photoelectric equation.",
+          "answer": "hv = phi + KE_max",
+          "explanation": "Energy of incident photon equals work function plus maximum kinetic energy."
+        }
+      ]
+    };
+
+    // Simulate network delay
+    await Future.delayed(const Duration(seconds: 1));
 
     setState(() {
-      _quizData = dummyData;
+      _quizData = QuizData.fromJson(mockJsonResponse);
       _isLoading = false;
     });
-
-    /* 
-    // Original API call logic commented out for testing
-    try {
-      final data = await _apiService.fetchQuizData(widget.subjectId);
-      setState(() {
-        _quizData = data;
-        _isLoading = false;
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading quiz data: $e'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-      setState(() {
-        _isLoading = false;
-      });
-    }
-    */
   }
 
   void _nextQuestion() {
@@ -148,11 +136,13 @@ class _SubjectQuizState extends State<SubjectQuiz> {
     
     setState(() {
       isAnswered = true;
-      if (userAnswer == correctAnswer) {
+      // Note: In real scenarios, fuzzy matching or LLM grading would be used here.
+      // For this prototype, we'll do a simple contains check to be more forgiving.
+      if (userAnswer.contains(correctAnswer) || correctAnswer.contains(userAnswer)) {
         score++;
         _textFeedback = "Correct!";
       } else {
-        _textFeedback = "Incorrect. The correct answer is: ${question.correctAnswer}";
+        _textFeedback = "Incorrect. Expected: ${question.correctAnswer}";
       }
     });
   }
@@ -245,6 +235,25 @@ class _SubjectQuizState extends State<SubjectQuiz> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Concept Badge
+                  if (currentQuestion.concept != null)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        currentQuestion.concept!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: theme.colorScheme.onPrimaryContainer,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  
                   Text(
                     currentQuestion.questionText,
                     style: const TextStyle(
@@ -281,7 +290,30 @@ class _SubjectQuizState extends State<SubjectQuiz> {
 
                   const SizedBox(height: 30),
 
-                  if (isAnswered)
+                  if (isAnswered) ...[
+                    // Explanation Section
+                    if (currentQuestion.explanation != null)
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        margin: const EdgeInsets.only(bottom: 20),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.secondaryContainer.withOpacity(0.4),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: theme.colorScheme.secondary.withOpacity(0.2)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "Explanation",
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(currentQuestion.explanation!),
+                          ],
+                        ),
+                      ),
+
                     SizedBox(
                       width: double.infinity,
                       height: 55,
@@ -301,6 +333,7 @@ class _SubjectQuizState extends State<SubjectQuiz> {
                         ),
                       ),
                     ),
+                  ],
                 ],
               ),
             ),
@@ -320,6 +353,7 @@ class _SubjectQuizState extends State<SubjectQuiz> {
         TextField(
           controller: _textController,
           enabled: !isAnswered,
+          maxLines: 3,
           decoration: InputDecoration(
             hintText: "Type your answer here...",
             filled: true,
@@ -333,6 +367,7 @@ class _SubjectQuizState extends State<SubjectQuiz> {
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
+            height: 50,
             child: ElevatedButton(
               onPressed: () => _submitTextAnswer(question),
               child: const Text("Submit Answer"),

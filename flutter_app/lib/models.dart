@@ -51,7 +51,6 @@ class SubjectData {
   });
 
   factory SubjectData.fromJson(Map<String, dynamic> json) {
-    // debugPrint('JSON Received in SubjectData: $json');
     return SubjectData(
       subjects: (json['subjects'] as List?)?.map((i) => Subject.fromJson(i)).toList() ?? [],
       dependencies: (json['dependencies'] as List?)?.map((i) => Dependency.fromJson(i)).toList() ?? [],
@@ -63,52 +62,87 @@ class SubjectData {
 enum QuestionType { mcq, text }
 
 class Question {
+  final String id;
+  final String? concept;
+  final String? difficulty;
   final String questionText;
   final String? code;
   final String? language;
   final List<String> options;
   final int answerIndex;
-  final String? correctAnswer; // For text-based questions
+  final String? correctAnswer; 
+  final String? explanation;
   final QuestionType type;
 
   Question({
+    required this.id,
+    this.concept,
+    this.difficulty,
     required this.questionText,
     this.code,
     this.language,
     required this.options,
     required this.answerIndex,
     this.correctAnswer,
+    this.explanation,
     required this.type,
   });
 
   factory Question.fromJson(Map<String, dynamic> json) {
-    final typeStr = json['type']?.toString().toLowerCase();
-    final QuestionType type = typeStr == 'text' ? QuestionType.text : QuestionType.mcq;
+    final rawType = json['type']?.toString().toUpperCase() ?? 'MCQ';
+    
+    // Map API types to internal enum
+    QuestionType type;
+    if (rawType == 'MCQ' || rawType == 'TRUEFALSE') {
+      type = QuestionType.mcq;
+    } else {
+      type = QuestionType.text;
+    }
+
+    final options = List<String>.from(json['options'] ?? []);
+    final rawAnswer = json['answer']?.toString() ?? '';
+    
+    // Determine answer index if MCQ
+    int index = -1;
+    if (type == QuestionType.mcq) {
+      if (rawType == 'TRUEFALSE') {
+        index = (rawAnswer.toLowerCase() == 'true') ? 0 : 1;
+      } else {
+        index = options.indexOf(rawAnswer);
+      }
+    }
 
     return Question(
+      id: json['id']?.toString() ?? '',
+      concept: json['concept'],
+      difficulty: json['difficulty'],
       questionText: json['question'] ?? 'No Question',
       code: json['code'],
       language: json['language'],
-      options: List<String>.from(json['options'] ?? []),
-      answerIndex: json['answer'] ?? 0,
-      correctAnswer: json['correct_answer']?.toString(),
+      options: rawType == 'TRUEFALSE' ? ['True', 'False'] : options,
+      answerIndex: index,
+      correctAnswer: rawAnswer,
+      explanation: json['explanation'],
       type: type,
     );
   }
 }
 
 class QuizData {
-  final String section;
+  final String subject;
+  final String topic;
   final List<Question> questions;
 
   QuizData({
-    required this.section,
+    required this.subject,
+    required this.topic,
     required this.questions,
   });
 
   factory QuizData.fromJson(Map<String, dynamic> json) {
     return QuizData(
-      section: json['section'] ?? '',
+      subject: json['subject'] ?? '',
+      topic: json['topic'] ?? '',
       questions: (json['questions'] as List?)?.map((i) => Question.fromJson(i)).toList() ?? [],
     );
   }
