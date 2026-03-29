@@ -12,10 +12,10 @@ class ApiService {
   String? _token;
   String? _userId;
 
-  // Node.js Express API (Quiz & Auth)
+  // Node.js Express API (Static Quiz & Auth)
   final String _expressBase = "http://10.0.2.2:5000/api";
 
-  // Python FastAPI (Knowledge Graph & Chat)
+  // Python FastAPI (Dynamic Graph, Chat & Adaptive Quiz)
   final String _fastApiBase = "http://10.0.2.2:8000";
 
   String? get userId => _userId;
@@ -43,22 +43,6 @@ class ApiService {
     }
   }
 
-  /// AUTH: Google Login
-  Future<Map<String, dynamic>> loginWithGoogle(String idToken) async {
-    try {
-      final response = await _dio.post('$_expressBase/auth/google', data: {
-        'token': idToken,
-      });
-      if (response.data['token'] != null) {
-        setToken(response.data['token'], response.data['user']['id']);
-      }
-      return response.data;
-    } catch (e) {
-      debugPrint('Google Login error: $e');
-      throw Exception('Google login failed: $e');
-    }
-  }
-
   /// AUTH: Register
   Future<Map<String, dynamic>> register(String name, String email, String password) async {
     try {
@@ -77,6 +61,22 @@ class ApiService {
     }
   }
 
+  /// AUTH: Google Login
+  Future<Map<String, dynamic>> loginWithGoogle(String idToken) async {
+    try {
+      final response = await _dio.post('$_expressBase/auth/google', data: {
+        'token': idToken,
+      });
+      if (response.data['token'] != null) {
+        setToken(response.data['token'], response.data['user']['id']);
+      }
+      return response.data;
+    } catch (e) {
+      debugPrint('Google Login error: $e');
+      throw Exception('Google login failed: $e');
+    }
+  }
+
   /// NODE.JS: Fetches all available quiz subjects (for mapping)
   Future<List<Map<String, dynamic>>> fetchAllQuizSubjects() async {
     try {
@@ -92,7 +92,7 @@ class ApiService {
     }
   }
 
-  /// NODE.JS: Fetches Quiz Data
+  /// NODE.JS: Fetches Static Quiz Data
   Future<QuizData> fetchQuizData(String subjectId) async {
     try {
       final response = await _dio.get('$_expressBase/quiz/subjects/$subjectId');
@@ -150,16 +150,60 @@ class ApiService {
     }
   }
 
-  /// FASTAPI: Chat Agent
-  Future<dynamic> chat(String? message, String? subject) async {
+  /// FASTAPI: Chat Agent (Returns intents, next steps, or quiz/graph data)
+  Future<dynamic> chat({
+    String? message,
+    String? subject,
+    String? step,
+    String? intent,
+    String? level,
+    Map<String, dynamic>? prerequisiteData,
+  }) async {
     try {
       final response = await _dio.post(
         '$_fastApiBase/chat',
-        data: {'message': message, 'subject': subject},
+        data: {
+          'message': message,
+          'subject': subject,
+          'step': step,
+          'intent': intent,
+          'level': level,
+          'prerequisite_data': prerequisiteData,
+        },
       );
       return response.data;
     } catch (e) {
       throw Exception('Chat connection failed: $e');
+    }
+  }
+
+  /// FASTAPI: Evaluate Quiz (Adaptive Learning)
+  Future<Map<String, dynamic>> evaluateQuiz({
+    required Map<String, dynamic> quizData,
+    required Map<String, String?> answers,
+    List<Map<String, dynamic>>? failedQuestions,
+    Map<String, dynamic>? prerequisiteData,
+    String? targetSubject,
+    int? currentPrereqIndex,
+    bool? remediationMode,
+  }) async {
+    try {
+      final response = await _dio.post(
+        '$_fastApiBase/evaluate-quiz',
+        data: {
+          'quiz_data': quizData,
+          'answers': answers,
+          'failed_questions': failedQuestions,
+          'prerequisite_data': prerequisiteData,
+          'target_subject': targetSubject,
+          'current_prereq_index': currentPrereqIndex,
+          'remediation_mode': remediationMode,
+        },
+      );
+      return response.data;
+    } catch (e) {
+      debugPrint('Evaluation error: $e');
+      throw Exception('Failed to evaluate quiz');
     }
   }
 }

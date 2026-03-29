@@ -10,12 +10,14 @@ class SubjectQuiz extends StatefulWidget {
   final String subjectId;
   final String subjectName;
   final VoidCallback onComplete;
+  final QuizData? initialQuizData;
 
   const SubjectQuiz({
     super.key,
     required this.subjectId,
     required this.subjectName,
     required this.onComplete,
+    this.initialQuizData,
   });
 
   @override
@@ -31,7 +33,6 @@ class _SubjectQuizState extends State<SubjectQuiz> {
   QuizPhase _phase = QuizPhase.loading;
   String? _selectedDifficulty;
 
-  // Mapping fallback
   List<Map<String, dynamic>> _availableSubjects = [];
   String? _actualSubjectId;
 
@@ -47,7 +48,18 @@ class _SubjectQuizState extends State<SubjectQuiz> {
   void initState() {
     super.initState();
     _actualSubjectId = widget.subjectId;
-    _loadServerData();
+    
+    if (widget.initialQuizData != null) {
+      debugPrint("[SubjectQuiz] Using AI-generated quiz data");
+      _fullQuizData = widget.initialQuizData;
+      // If questions are already here, we can jump to quiz if we want, 
+      // but let's allow difficulty selection to filter if AI sent many.
+      _phase = QuizPhase.difficulty;
+      // Auto-start if it's an AI quiz (usually 10 questions)
+      WidgetsBinding.instance.addPostFrameCallback((_) => _startQuiz("mixed"));
+    } else {
+      _loadServerData();
+    }
   }
 
   @override
@@ -69,9 +81,6 @@ class _SubjectQuizState extends State<SubjectQuiz> {
         await _handleMappingFallback();
       } else if (mounted) {
         setState(() => _phase = QuizPhase.results);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: Could not reach Node.js server")),
-        );
       }
     }
   }
@@ -83,15 +92,11 @@ class _SubjectQuizState extends State<SubjectQuiz> {
       return;
     }
 
-    // Try fuzzy match
     String targetName = widget.subjectName.toLowerCase();
     Map<String, dynamic>? match;
-
     for (var s in subjects) {
       String name = (s['name'] ?? "").toString().toLowerCase();
-      String shortName = (s['shortName'] ?? "").toString().toLowerCase();
-      if (targetName.contains(name) || name.contains(targetName) || 
-          targetName.contains(shortName) || shortName.contains(targetName)) {
+      if (targetName.contains(name) || name.contains(targetName)) {
         match = s;
         break;
       }
@@ -115,9 +120,7 @@ class _SubjectQuizState extends State<SubjectQuiz> {
 
     final allQuestions = _fullQuizData!.questions;
     if (allQuestions.isEmpty) {
-       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("No questions available for this subject yet.")),
-       );
+       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No questions found.")));
        return;
     }
 
@@ -126,18 +129,12 @@ class _SubjectQuizState extends State<SubjectQuiz> {
       filtered = List.from(allQuestions)..shuffle();
     } else {
       filtered = allQuestions.where((q) => q.difficulty?.toLowerCase() == difficulty).toList();
-      if (filtered.length < 3) {
-        filtered = List.from(allQuestions)..shuffle();
-      }
-    }
-
-    if (filtered.length > 10) {
-      filtered = filtered.take(10).toList();
+      if (filtered.isEmpty) filtered = allQuestions; 
     }
 
     setState(() {
       _selectedDifficulty = difficulty;
-      _filteredQuestions = filtered;
+      _filteredQuestions = filtered.take(10).toList();
       _phase = QuizPhase.quiz;
       currentIndex = 0;
       score = 0;
@@ -147,18 +144,14 @@ class _SubjectQuizState extends State<SubjectQuiz> {
 
   void _submitMCQAnswer(int index, Question question) {
     if (isAnswered) return;
-
     final isCorrect = index == question.answerIndex;
-    final selectedOptionText = question.options[index];
-
     setState(() {
       selectedIndex = index;
       isAnswered = true;
       if (isCorrect) score++;
-      
       _userAnswersLog.add({
         'questionId': question.id,
-        'selectedAnswer': selectedOptionText,
+        'selected': question.options[index],
         'isCorrect': isCorrect,
       });
     });
@@ -166,7 +159,6 @@ class _SubjectQuizState extends State<SubjectQuiz> {
 
   void _submitTextAnswer(Question question) {
     if (_textController.text.trim().isEmpty) return;
-
     final userAnswer = _textController.text.trim();
     final isCorrect = userAnswer.toLowerCase() == question.correctAnswer.toLowerCase();
 
@@ -178,10 +170,9 @@ class _SubjectQuizState extends State<SubjectQuiz> {
       } else {
         _textFeedback = "Incorrect. Expected: ${question.correctAnswer}";
       }
-
       _userAnswersLog.add({
         'questionId': question.id,
-        'selectedAnswer': userAnswer,
+        'selected': userAnswer,
         'isCorrect': isCorrect,
       });
     });
@@ -213,14 +204,8 @@ class _SubjectQuizState extends State<SubjectQuiz> {
         difficulty: _selectedDifficulty,
       );
     }
-
-    final threshold = (_filteredQuestions.length * 0.7).ceil();
-    bool passed = score >= threshold;
-
-    if (passed) {
-      widget.onComplete();
-    }
-
+    bool passed = score >= (_filteredQuestions.length * 0.6);
+    if (passed) widget.onComplete();
     _showResults(passed);
   }
 
@@ -229,29 +214,10 @@ class _SubjectQuizState extends State<SubjectQuiz> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: Text(passed ? "Quiz Passed! 🎉" : "Quiz Failed ❌"),
-        content: Text("You scored $score out of ${_filteredQuestions.length}."),
+        title: Text(passed ? "Completed! 🎉" : "Keep Practicing! 📚"),
+        content: Text("You scored $score/${_filteredQuestions.length}"),
         actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              Navigator.pop(context);
-            },
-            child: const Text("Return to Roadmap"),
-          ),
-          if (!passed)
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                setState(() {
-                  _phase = QuizPhase.difficulty;
-                  selectedIndex = null;
-                  isAnswered = false;
-                  _textController.clear();
-                });
-              },
-              child: const Text("Try Again"),
-            ),
+          TextButton(onPressed: () { Navigator.pop(ctx); Navigator.pop(context); }, child: const Text("Exit")),
         ],
       ),
     );
@@ -260,71 +226,33 @@ class _SubjectQuizState extends State<SubjectQuiz> {
   @override
   Widget build(BuildContext context) {
     switch (_phase) {
-      case QuizPhase.loading:
-        return Scaffold(
-          appBar: AppBar(title: Text(widget.subjectName)),
-          body: const Center(child: CircularProgressIndicator()),
-        );
-      case QuizPhase.mapping:
-        return _buildMappingSelector();
-      case QuizPhase.difficulty:
-        return _buildDifficultySelection();
-      case QuizPhase.quiz:
-        return _buildQuizContent();
-      case QuizPhase.results:
-        return Scaffold(
-          appBar: AppBar(title: Text(widget.subjectName)),
-          body: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text("Unable to load quiz data."),
-                const SizedBox(height: 20),
-                ElevatedButton(onPressed: _loadServerData, child: const Text("Retry")),
-              ],
-            ),
-          ),
-        );
+      case QuizPhase.loading: return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      case QuizPhase.mapping: return _buildMappingSelector();
+      case QuizPhase.difficulty: return _buildDifficultySelection();
+      case QuizPhase.quiz: return _buildQuizContent();
+      case QuizPhase.results: return Scaffold(body: Center(child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text("Error loading quiz."),
+          ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text("Go Back"))
+        ],
+      )));
     }
   }
 
   Widget _buildMappingSelector() {
     return Scaffold(
       appBar: AppBar(title: const Text("Select Subject")),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Text(
-              "We couldn't find a direct quiz for '${widget.subjectName}'.\nPlease select the most relevant subject from our database:",
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-          ),
-          Expanded(
-            child: ListView.separated(
-              itemCount: _availableSubjects.length,
-              separatorBuilder: (context, index) => const Divider(),
-              itemBuilder: (context, index) {
-                final s = _availableSubjects[index];
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: Colors.purple.shade50,
-                    child: Text(s['icon'] ?? '📚', style: const TextStyle(fontSize: 20)),
-                  ),
-                  title: Text(s['name'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text(s['shortName'] ?? ''),
-                  onTap: () {
-                    setState(() {
-                      _actualSubjectId = s['id'];
-                      _loadServerData();
-                    });
-                  },
-                );
-              },
-            ),
-          ),
-        ],
+      body: ListView.separated(
+        itemCount: _availableSubjects.length,
+        separatorBuilder: (context, index) => const Divider(),
+        itemBuilder: (context, index) {
+          final s = _availableSubjects[index];
+          return ListTile(
+            title: Text(s['name'] ?? ''),
+            onTap: () { _actualSubjectId = s['id']; _loadServerData(); },
+          );
+        },
       ),
     );
   }
@@ -342,8 +270,6 @@ class _SubjectQuizState extends State<SubjectQuiz> {
             _difficultyButton("Medium", "🟡", Colors.orange, "medium"),
             const SizedBox(height: 16),
             _difficultyButton("Hard", "🔴", Colors.red, "hard"),
-            const SizedBox(height: 16),
-            _difficultyButton("Mixed", "🎨", Colors.blue, "mixed"),
           ],
         ),
       ),
@@ -353,21 +279,20 @@ class _SubjectQuizState extends State<SubjectQuiz> {
   Widget _difficultyButton(String label, String icon, Color color, String value) {
     return SizedBox(
       width: double.infinity,
-      height: 70,
+      height: 60,
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
           backgroundColor: color.withOpacity(0.1),
           foregroundColor: color,
-          side: BorderSide(color: color.withOpacity(0.5), width: 2),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
         onPressed: () => _startQuiz(value),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(icon, style: const TextStyle(fontSize: 24)),
+            Text(icon, style: const TextStyle(fontSize: 20)),
             const SizedBox(width: 12),
-            Text(label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -409,6 +334,8 @@ class _SubjectQuizState extends State<SubjectQuiz> {
             const SizedBox(height: 20),
             if (currentQuestion.code != null) _buildCodeView(currentQuestion.code!, currentQuestion.language),
             const SizedBox(height: 25),
+            
+            // Fix: Render based on Question Type
             if (currentQuestion.type == QuestionType.text)
               _buildTextInputField(currentQuestion)
             else
@@ -416,6 +343,7 @@ class _SubjectQuizState extends State<SubjectQuiz> {
                 currentQuestion.options.length,
                 (index) => _buildOptionTile(index, currentQuestion),
               ),
+              
             const SizedBox(height: 30),
             if (isAnswered) _buildExplanationAndNext(currentQuestion, theme),
           ],
@@ -506,15 +434,48 @@ class _SubjectQuizState extends State<SubjectQuiz> {
         TextField(
           controller: _textController,
           enabled: !isAnswered,
-          decoration: const InputDecoration(border: OutlineInputBorder(), hintText: "Enter your answer"),
+          style: const TextStyle(fontSize: 18),
+          decoration: InputDecoration(
+            hintText: "Enter your answer here",
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            filled: true,
+            fillColor: Colors.white,
+          ),
+          keyboardType: TextInputType.text,
         ),
         if (!isAnswered) ...[
-          const SizedBox(height: 12),
-          ElevatedButton(onPressed: () => _submitTextAnswer(question), child: const Text("Submit")),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed: () => _submitTextAnswer(question),
+              child: const Text("Submit Answer"),
+            ),
+          ),
         ],
         if (isAnswered && _textFeedback != null) ...[
-          const SizedBox(height: 12),
-          Text(_textFeedback!, style: TextStyle(fontWeight: FontWeight.bold, color: _textFeedback!.startsWith("Correct") ? Colors.green : Colors.red)),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _textFeedback!.contains("Correct") ? Colors.green.shade50 : Colors.red.shade50,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _textFeedback!.contains("Correct") ? Icons.check_circle : Icons.cancel,
+                  color: _textFeedback!.contains("Correct") ? Colors.green : Colors.red,
+                ),
+                const SizedBox(width: 8),
+                Text(_textFeedback!, style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: _textFeedback!.contains("Correct") ? Colors.green : Colors.red,
+                )),
+              ],
+            ),
+          ),
         ]
       ],
     );
@@ -523,8 +484,9 @@ class _SubjectQuizState extends State<SubjectQuiz> {
   Widget _buildExplanationAndNext(Question question, ThemeData theme) {
     return Column(
       children: [
-        if (question.explanation != null)
+        if (question.explanation != null && question.explanation!.isNotEmpty)
           Container(
+            width: double.infinity,
             padding: const EdgeInsets.all(16),
             margin: const EdgeInsets.only(bottom: 20),
             decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(12)),

@@ -16,10 +16,10 @@ class Subject {
 
   factory Subject.fromJson(Map<String, dynamic> json) {
     return Subject(
-      id: json['id']?.toString() ?? '',
-      name: json['name'] ?? 'Unknown',
+      id: json['id']?.toString() ?? json['subject'] ?? '',
+      name: json['name'] ?? json['subject'] ?? 'Unknown',
       type: json['type'] ?? 'core',
-      desc: json['desc'] ?? '',
+      desc: json['desc'] ?? json['why'] ?? '',
     );
   }
 }
@@ -51,6 +51,34 @@ class SubjectData {
   });
 
   factory SubjectData.fromJson(Map<String, dynamic> json) {
+    if (json.containsKey('prerequisites') && json['prerequisites'] is List) {
+      List<Subject> subs = [];
+      List<Dependency> deps = [];
+      String mainSubject = json['subject'] ?? 'Target';
+      
+      var prereqs = json['prerequisites'] as List;
+      for (int i = 0; i < prereqs.length; i++) {
+        var p = prereqs[i];
+        subs.add(Subject.fromJson(p));
+        if (i > 0) {
+          deps.add(Dependency(
+            from: prereqs[i-1]['subject']?.toString() ?? '',
+            to: p['subject']?.toString() ?? '',
+          ));
+        }
+      }
+      if (subs.isNotEmpty) {
+        subs.add(Subject(id: mainSubject, name: mainSubject, type: 'target', desc: 'Main Goal'));
+        deps.add(Dependency(
+          from: subs[subs.length - 2].id,
+          to: mainSubject,
+        ));
+      } else {
+        subs.add(Subject(id: mainSubject, name: mainSubject, type: 'target', desc: 'Main Goal'));
+      }
+      return SubjectData(subjects: subs, dependencies: deps);
+    }
+
     return SubjectData(
       subjects: (json['subjects'] as List?)?.map((i) => Subject.fromJson(i)).toList() ?? [],
       dependencies: (json['dependencies'] as List?)?.map((i) => Dependency.fromJson(i)).toList() ?? [],
@@ -89,56 +117,58 @@ class Question {
   });
 
   factory Question.fromJson(Map<String, dynamic> json) {
-    final rawType = json['type']?.toString().toUpperCase() ?? 'MCQ';
-    
-    // Map API types to internal enum
-    QuestionType type;
-    if (rawType == 'MCQ' || rawType == 'TRUEFALSE') {
-      type = QuestionType.mcq;
-    } else {
-      type = QuestionType.text;
-    }
-
-    final options = List<String>.from(json['options'] ?? []);
-    final rawAnswer = json['answer']?.toString() ?? '';
-    
-    // Determine answer index if MCQ
+    List<String> optionsList = [];
     int index = -1;
-    if (type == QuestionType.mcq) {
-      if (rawType == 'TRUEFALSE') {
-        index = (rawAnswer.toLowerCase() == 'true') ? 0 : 1;
+    String correctAns = (json['correct_answer'] ?? json['answer'] ?? '').toString();
+
+    var rawOptions = json['options'];
+    if (rawOptions is List && rawOptions.isNotEmpty) {
+      optionsList = List<String>.from(rawOptions);
+      index = optionsList.indexOf(correctAns);
+    } else if (rawOptions is Map && rawOptions.isNotEmpty) {
+      optionsList = [
+        rawOptions['A']?.toString() ?? '',
+        rawOptions['B']?.toString() ?? '',
+        rawOptions['C']?.toString() ?? '',
+        rawOptions['D']?.toString() ?? '',
+      ];
+      if (correctAns.length == 1 && (correctAns.startsWith('A') || correctAns.startsWith('B') || correctAns.startsWith('C') || correctAns.startsWith('D'))) {
+        index = correctAns.codeUnitAt(0) - 'A'.codeUnitAt(0);
       } else {
-        index = options.indexOf(rawAnswer);
+        index = optionsList.indexOf(correctAns);
       }
     }
 
+    // If no options are provided, treat it as a text-based question
+    QuestionType type = optionsList.isEmpty ? QuestionType.text : QuestionType.mcq;
+
     return Question(
       id: json['id']?.toString() ?? '',
-      concept: json['concept'],
+      concept: json['concept'] ?? json['topic'],
       difficulty: json['difficulty'],
       questionText: json['question'] ?? 'No Question',
       code: json['code'],
       language: json['language'],
-      options: rawType == 'TRUEFALSE' ? ['True', 'False'] : options,
+      options: optionsList,
       answerIndex: index,
-      correctAnswer: rawAnswer,
+      correctAnswer: correctAns,
       explanation: json['explanation'],
       type: type,
     );
   }
 }
 
-// lib/models.dart
 class QuizData {
   final String subject;
   final List<Question> questions;
+  final String? level;
 
-  QuizData({required this.subject, required this.questions});
+  QuizData({required this.subject, required this.questions, this.level});
 
   factory QuizData.fromJson(Map<String, dynamic> json) {
     return QuizData(
-      // Handles both "section" (from Node API) and "subject" (legacy)
-      subject: json['section'] ?? json['subject'] ?? 'Unknown Subject',
+      subject: json['subject'] ?? json['section'] ?? 'Unknown Subject',
+      level: json['level'],
       questions: (json['questions'] as List?)
           ?.map((i) => Question.fromJson(i))
           .toList() ?? [],

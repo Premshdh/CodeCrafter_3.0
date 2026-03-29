@@ -19,9 +19,15 @@ class _ChatViewState extends State<ChatView> {
   bool _isLoading = false;
   final ScrollController _scrollController = ScrollController();
 
+  // Session State tracking
+  String? _currentSubject;
+  String? _currentStep;
+  Map<String, dynamic>? _lastPrerequisiteData;
+
   @override
   void initState() {
     super.initState();
+    _currentSubject = widget.initialSubject;
     _addSystemMessage("Hello! I'm your Learning Assistant. What would you like to learn today?");
   }
 
@@ -43,20 +49,34 @@ class _ChatViewState extends State<ChatView> {
     });
   }
 
-  Future<void> _sendMessage() async {
-    if (_controller.text.trim().isEmpty) return;
+  Future<void> _sendMessage({String? overrideMessage}) async {
+    final userMessage = overrideMessage ?? _controller.text;
+    if (userMessage.trim().isEmpty) return;
 
-    final userMessage = _controller.text;
     setState(() {
-      _messages.add({"role": "user", "content": userMessage});
+      if (overrideMessage == null) {
+        _messages.add({"role": "user", "content": userMessage});
+        _controller.clear();
+      }
       _isLoading = true;
-      _controller.clear();
     });
     _scrollToBottom();
 
     try {
-      final response = await _apiService.chat(userMessage, widget.initialSubject);
+      // We stop sending 'intent' back so the AI can switch between Roadmap/Quiz dynamically
+      final response = await _apiService.chat(
+        message: userMessage, 
+        subject: _currentSubject,
+        step: _currentStep,
+        prerequisiteData: _lastPrerequisiteData,
+      );
       
+      _currentSubject = response['subject'] ?? _currentSubject;
+      _currentStep = response['step'];
+      if (response['prerequisite_data'] != null) {
+        _lastPrerequisiteData = response['prerequisite_data'];
+      }
+
       String botResponse = response['response'] ?? "I'm not sure how to respond to that.";
       
       setState(() {
@@ -68,13 +88,9 @@ class _ChatViewState extends State<ChatView> {
         _isLoading = false;
       });
 
-      if (response['prerequisite_data'] != null) {
-        _addSystemMessage("I've generated a learning roadmap for you! Click the button below to view it.");
-      }
-
     } catch (e) {
       setState(() {
-        _messages.add({"role": "assistant", "content": "Sorry, I'm having trouble connecting to the brain. Please try again."});
+        _messages.add({"role": "assistant", "content": "Sorry, I'm having trouble connecting. Please try again."});
         _isLoading = false;
       });
     }
@@ -92,7 +108,15 @@ class _ChatViewState extends State<ChatView> {
         elevation: 0,
         actions: [
           IconButton(
-            onPressed: () => setState(() => _messages.clear()), 
+            onPressed: () {
+              setState(() {
+                _messages.clear();
+                _currentSubject = null;
+                _currentStep = null;
+                _lastPrerequisiteData = null;
+              });
+              _addSystemMessage("Session reset. What would you like to learn?");
+            }, 
             icon: const Icon(Icons.refresh, color: Color(0xFF6B7280))
           )
         ],
@@ -121,12 +145,9 @@ class _ChatViewState extends State<ChatView> {
           if (_isLoading) 
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 8.0),
-              child: SizedBox(
-                height: 2,
-                child: LinearProgressIndicator(
-                  backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF8B5CF6)),
-                ),
+              child: LinearProgressIndicator(
+                backgroundColor: Colors.transparent,
+                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF8B5CF6)),
               ),
             ),
           _buildInputArea(theme),
@@ -141,63 +162,53 @@ class _ChatViewState extends State<ChatView> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: isUser ? const Color(0xFF8B5CF6) : Colors.white,
-        borderRadius: BorderRadius.only(
-          topLeft: const Radius.circular(16),
-          topRight: const Radius.circular(16),
-          bottomLeft: Radius.circular(isUser ? 16 : 4),
-          bottomRight: Radius.circular(isUser ? 4 : 16),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04), 
-            blurRadius: 10, 
-            offset: const Offset(0, 4)
-          )
-        ],
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
         border: !isUser ? Border.all(color: const Color(0xFFE5E7EB)) : null,
       ),
       child: Text(
         msg["content"]!,
-        style: TextStyle(
-          color: isUser ? Colors.white : const Color(0xFF374151),
-          fontSize: 16,
-          height: 1.4,
-        ),
+        style: TextStyle(color: isUser ? Colors.white : const Color(0xFF374151), fontSize: 16),
       ),
     );
   }
 
   Widget _buildActionButtons(Map<String, dynamic> data) {
     List<Widget> buttons = [];
+    final String? subjectName = data['subject'] ?? _currentSubject;
 
+    // View Roadmap Button
     if (data['prerequisite_data'] != null) {
-      final subjectName = data['subject'] ?? "Requested";
-      buttons.add(_actionButton("View $subjectName Roadmap", Icons.map_outlined, const Color(0xFF8B5CF6), () {
+      buttons.add(_actionButton("View Roadmap", Icons.map_outlined, const Color(0xFF8B5CF6), () {
          final roadmapData = SubjectData.fromJson(data['prerequisite_data']);
          Navigator.push(context, MaterialPageRoute(builder: (context) => SubjectDependencyGraph(
-           subjectName: subjectName,
+           subjectName: subjectName ?? "Subject",
            initialData: roadmapData,
          )));
       }));
     }
 
-    if (data['step'] == 'quiz' || data['intent'] == 'test') {
-      final qSubject = data['subject'] ?? 'ds';
-      buttons.add(_actionButton("Take $qSubject Quiz", Icons.quiz_outlined, const Color(0xFF10B981), () {
+    // Take Quiz Button (Aggressive Logic: Show if we have any subject)
+    if (subjectName != null && data['step'] != 'get_subject') {
+      buttons.add(_actionButton("Take Quiz", Icons.quiz_outlined, const Color(0xFF10B981), () {
+         final quizData = data['quiz_data'] != null ? QuizData.fromJson(data['quiz_data']) : null;
          Navigator.push(context, MaterialPageRoute(builder: (context) => SubjectQuiz(
-           subjectId: qSubject, 
-           subjectName: qSubject, 
-           onComplete: () => _addSystemMessage("Great job completing the quiz! What's next?"),
+           subjectId: subjectName, 
+           subjectName: subjectName, 
+           initialQuizData: quizData,
+           onComplete: () => _addSystemMessage("Great job! Ready for the next topic?"),
          )));
       }));
     }
 
-    if (buttons.isEmpty) return const SizedBox.shrink();
+    // Intent Selectors
+    if (data['step'] == 'awaiting_intent') {
+      buttons.add(_actionButton("Roadmap", Icons.auto_awesome, Colors.blue, () => _sendMessage(overrideMessage: "Give me the roadmap")));
+      buttons.add(_actionButton("Test Me", Icons.timer, Colors.orange, () => _sendMessage(overrideMessage: "test")));
+    }
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 12, left: 4),
-      child: Wrap(spacing: 8, runSpacing: 8, children: buttons),
-    );
+    if (buttons.isEmpty) return const SizedBox.shrink();
+    return Padding(padding: const EdgeInsets.only(top: 12), child: Wrap(spacing: 8, runSpacing: 8, children: buttons));
   }
 
   Widget _actionButton(String label, IconData icon, Color color, VoidCallback onPressed) {
@@ -208,10 +219,8 @@ class _ChatViewState extends State<ChatView> {
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.white,
         foregroundColor: color,
-        surfaceTintColor: Colors.white,
         elevation: 0,
-        side: BorderSide(color: color.withOpacity(0.3)),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        side: BorderSide(color: color.withOpacity(0.2)),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
@@ -219,60 +228,24 @@ class _ChatViewState extends State<ChatView> {
 
   Widget _buildInputArea(ThemeData theme) {
     return Container(
-      padding: EdgeInsets.fromLTRB(16, 12, 16, MediaQuery.of(context).padding.bottom + 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
+      padding: const EdgeInsets.all(16),
+      decoration: const BoxDecoration(color: Colors.white),
       child: Row(
         children: [
           Expanded(
             child: TextField(
               controller: _controller,
-              style: const TextStyle(fontSize: 15),
               decoration: InputDecoration(
-                hintText: "What do you want to learn today?",
-                hintStyle: const TextStyle(color: Color(0xFF9CA3AF)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                hintText: "Ask AI anything...",
                 filled: true,
                 fillColor: const Color(0xFFF3F4F6),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: const BorderSide(color: Color(0xFF8B5CF6), width: 1),
-                ),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
               ),
               onSubmitted: (_) => _sendMessage(),
             ),
           ),
-          const SizedBox(width: 12),
-          Container(
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [Color(0xFF8B5CF6), Color(0xFF7C3AED)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: IconButton(
-              onPressed: _sendMessage, 
-              icon: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
-            ),
-          ),
+          const SizedBox(width: 8),
+          IconButton(onPressed: () => _sendMessage(), icon: const Icon(Icons.send_rounded, color: Color(0xFF8B5CF6))),
         ],
       ),
     );
