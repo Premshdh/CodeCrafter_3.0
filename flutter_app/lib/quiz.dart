@@ -4,6 +4,8 @@ import 'package:flutter_highlight/themes/shades-of-purple.dart';
 import 'package:codecrafter/api_service.dart';
 import 'package:codecrafter/models.dart';
 
+enum QuizPhase { loading, difficulty, quiz, results, mapping }
+
 class SubjectQuiz extends StatefulWidget {
   final String subjectId;
   final String subjectName;
@@ -21,22 +23,31 @@ class SubjectQuiz extends StatefulWidget {
 }
 
 class _SubjectQuizState extends State<SubjectQuiz> {
-  // final ApiService _apiService = ApiService(); // Commented out to fix unused warning while mocking
-  QuizData? _quizData;
-  bool _isLoading = true;
+  final ApiService _apiService = ApiService();
+  final TextEditingController _textController = TextEditingController();
+
+  QuizData? _fullQuizData;
+  List<Question> _filteredQuestions = [];
+  QuizPhase _phase = QuizPhase.loading;
+  String? _selectedDifficulty;
+
+  // Mapping fallback
+  List<Map<String, dynamic>> _availableSubjects = [];
+  String? _actualSubjectId;
 
   int currentIndex = 0;
-  int? selectedIndex;
-  bool isAnswered = false;
   int score = 0;
-
-  final TextEditingController _textController = TextEditingController();
+  bool isAnswered = false;
+  int? selectedIndex;
   String? _textFeedback;
+  
+  List<Map<String, dynamic>> _userAnswersLog = [];
 
   @override
   void initState() {
     super.initState();
-    _fetchQuizData();
+    _actualSubjectId = widget.subjectId;
+    _loadServerData();
   }
 
   @override
@@ -45,70 +56,139 @@ class _SubjectQuizState extends State<SubjectQuiz> {
     super.dispose();
   }
 
-  Future<void> _fetchQuizData() async {
+  Future<void> _loadServerData() async {
+    setState(() => _phase = QuizPhase.loading);
+    try {
+      final data = await _apiService.fetchQuizData(_actualSubjectId!);
+      setState(() {
+        _fullQuizData = data;
+        _phase = QuizPhase.difficulty;
+      });
+    } catch (e) {
+      if (e.toString().contains("404")) {
+        await _handleMappingFallback();
+      } else if (mounted) {
+        setState(() => _phase = QuizPhase.results);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: Could not reach Node.js server")),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleMappingFallback() async {
+    final subjects = await _apiService.fetchAllQuizSubjects();
+    if (subjects.isEmpty) {
+      if (mounted) setState(() => _phase = QuizPhase.results);
+      return;
+    }
+
+    // Try fuzzy match
+    String targetName = widget.subjectName.toLowerCase();
+    Map<String, dynamic>? match;
+
+    for (var s in subjects) {
+      String name = (s['name'] ?? "").toString().toLowerCase();
+      String shortName = (s['shortName'] ?? "").toString().toLowerCase();
+      if (targetName.contains(name) || name.contains(targetName) || 
+          targetName.contains(shortName) || shortName.contains(targetName)) {
+        match = s;
+        break;
+      }
+    }
+
+    if (match != null) {
+      _actualSubjectId = match['id'];
+      await _loadServerData(); 
+    } else {
+      if (mounted) {
+        setState(() {
+          _availableSubjects = subjects;
+          _phase = QuizPhase.mapping;
+        });
+      }
+    }
+  }
+
+  void _startQuiz(String difficulty) {
+    if (_fullQuizData == null) return;
+
+    final allQuestions = _fullQuizData!.questions;
+    if (allQuestions.isEmpty) {
+       ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("No questions available for this subject yet.")),
+       );
+       return;
+    }
+
+    List<Question> filtered;
+    if (difficulty == 'mixed') {
+      filtered = List.from(allQuestions)..shuffle();
+    } else {
+      filtered = allQuestions.where((q) => q.difficulty?.toLowerCase() == difficulty).toList();
+      if (filtered.length < 3) {
+        filtered = List.from(allQuestions)..shuffle();
+      }
+    }
+
+    if (filtered.length > 10) {
+      filtered = filtered.take(10).toList();
+    }
+
     setState(() {
-      _isLoading = true;
+      _selectedDifficulty = difficulty;
+      _filteredQuestions = filtered;
+      _phase = QuizPhase.quiz;
+      currentIndex = 0;
+      score = 0;
+      _userAnswersLog = [];
     });
+  }
 
-    // Mock API response from the provided JSON
-    final mockJsonResponse = {
-      "subject": "Physics",
-      "topic": "Dual Nature of Radiation and Matter",
-      "questions": [
-        {
-          "id": "PHY_DUAL_1",
-          "concept": "Photoelectric Effect",
-          "difficulty": "Easy",
-          "type": "MCQ",
-          "question": "Who explained the photoelectric effect using quantum theory?",
-          "options": ["Isaac Newton", "Albert Einstein", "Max Planck", "Niels Bohr"],
-          "answer": "Albert Einstein",
-          "explanation": "Einstein explained the photoelectric effect by proposing that light consists of photons."
-        },
-        {
-          "id": "PHY_DUAL_2",
-          "concept": "Photoelectric Effect",
-          "difficulty": "Easy",
-          "type": "Short Answer",
-          "question": "Define photoelectric effect.",
-          "answer": "Emission of electrons from a metal surface when light of sufficient frequency falls on it.",
-          "explanation": "When photons strike a metal surface, electrons are emitted."
-        },
-        {
-          "id": "PHY_DUAL_6",
-          "concept": "Photoelectric Effect",
-          "difficulty": "Medium",
-          "type": "TrueFalse",
-          "question": "Increasing light intensity increases the kinetic energy of emitted electrons.",
-          "answer": "False",
-          "explanation": "Kinetic energy depends on frequency, not intensity."
-        },
-        {
-          "id": "PHY_DUAL_4",
-          "concept": "Photoelectric Equation",
-          "difficulty": "Medium",
-          "type": "Numeric",
-          "question": "Write Einstein's photoelectric equation.",
-          "answer": "hv = phi + KE_max",
-          "explanation": "Energy of incident photon equals work function plus maximum kinetic energy."
-        }
-      ]
-    };
+  void _submitMCQAnswer(int index, Question question) {
+    if (isAnswered) return;
 
-    // Simulate network delay
-    await Future.delayed(const Duration(seconds: 1));
+    final isCorrect = index == question.answerIndex;
+    final selectedOptionText = question.options[index];
 
     setState(() {
-      _quizData = QuizData.fromJson(mockJsonResponse);
-      _isLoading = false;
+      selectedIndex = index;
+      isAnswered = true;
+      if (isCorrect) score++;
+      
+      _userAnswersLog.add({
+        'questionId': question.id,
+        'selectedAnswer': selectedOptionText,
+        'isCorrect': isCorrect,
+      });
+    });
+  }
+
+  void _submitTextAnswer(Question question) {
+    if (_textController.text.trim().isEmpty) return;
+
+    final userAnswer = _textController.text.trim();
+    final isCorrect = userAnswer.toLowerCase() == question.correctAnswer.toLowerCase();
+
+    setState(() {
+      isAnswered = true;
+      if (isCorrect) {
+        score++;
+        _textFeedback = "Correct!";
+      } else {
+        _textFeedback = "Incorrect. Expected: ${question.correctAnswer}";
+      }
+
+      _userAnswersLog.add({
+        'questionId': question.id,
+        'selectedAnswer': userAnswer,
+        'isCorrect': isCorrect,
+      });
     });
   }
 
   void _nextQuestion() {
-    if (_quizData == null) return;
-
-    final List<Question> questions = _quizData!.questions;
-    if (currentIndex < questions.length - 1) {
+    if (currentIndex < _filteredQuestions.length - 1) {
       setState(() {
         currentIndex++;
         selectedIndex = null;
@@ -117,63 +197,40 @@ class _SubjectQuizState extends State<SubjectQuiz> {
         _textFeedback = null;
       });
     } else {
-      final threshold = (_quizData!.questions.length * 0.7).ceil();
-      bool passed = score >= threshold;
-
-      if (passed) {
-        widget.onComplete();
-      }
-
-      _showResults(passed);
+      _finishQuiz();
     }
   }
 
-  void _submitTextAnswer(Question question) {
-    if (_textController.text.trim().isEmpty) return;
+  Future<void> _finishQuiz() async {
+    final userId = _apiService.userId;
+    if (userId != null && _actualSubjectId != null) {
+      await _apiService.saveQuizHistory(
+        userId: userId,
+        subjectId: _actualSubjectId!,
+        score: score,
+        totalQuestions: _filteredQuestions.length,
+        answers: _userAnswersLog,
+        difficulty: _selectedDifficulty,
+      );
+    }
 
-    final userAnswer = _textController.text.trim().toLowerCase();
-    final correctAnswer = (question.correctAnswer ?? '').trim().toLowerCase();
-    
-    setState(() {
-      isAnswered = true;
-      // Note: In real scenarios, fuzzy matching or LLM grading would be used here.
-      // For this prototype, we'll do a simple contains check to be more forgiving.
-      if (userAnswer.contains(correctAnswer) || correctAnswer.contains(userAnswer)) {
-        score++;
-        _textFeedback = "Correct!";
-      } else {
-        _textFeedback = "Incorrect. Expected: ${question.correctAnswer}";
-      }
-    });
-  }
+    final threshold = (_filteredQuestions.length * 0.7).ceil();
+    bool passed = score >= threshold;
 
-  void _resetQuiz() {
-    setState(() {
-      currentIndex = 0;
-      score = 0;
-      selectedIndex = null;
-      isAnswered = false;
-      _textController.clear();
-      _textFeedback = null;
-    });
+    if (passed) {
+      widget.onComplete();
+    }
+
+    _showResults(passed);
   }
 
   void _showResults(bool passed) {
-    if (_quizData == null) return;
-
-    final List<Question> questions = _quizData!.questions;
-    final threshold = (_quizData!.questions.length * 0.7).ceil();
-    final theme = Theme.of(context);
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: Text(passed ? "Quiz Passed! 🎉" : "Quiz Failed ❌"),
-        content: Text(
-          passed
-              ? "Great job! You scored $score out of ${questions.length}. This subject is now marked as completed."
-              : "You scored $score out of ${questions.length}. You need at least $threshold questions correct to complete this subject.",
-        ),
+        content: Text("You scored $score out of ${_filteredQuestions.length}."),
         actions: [
           TextButton(
             onPressed: () {
@@ -186,12 +243,13 @@ class _SubjectQuizState extends State<SubjectQuiz> {
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(ctx);
-                _resetQuiz();
+                setState(() {
+                  _phase = QuizPhase.difficulty;
+                  selectedIndex = null;
+                  isAnswered = false;
+                  _textController.clear();
+                });
               },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: theme.colorScheme.primary,
-                foregroundColor: theme.colorScheme.onPrimary,
-              ),
               child: const Text("Try Again"),
             ),
         ],
@@ -201,230 +259,199 @@ class _SubjectQuizState extends State<SubjectQuiz> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    if (_isLoading || _quizData == null) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(widget.subjectName),
-          backgroundColor: theme.colorScheme.surface,
-          foregroundColor: theme.colorScheme.onSurface,
-        ),
-        body: const Center(child: CircularProgressIndicator()),
-      );
+    switch (_phase) {
+      case QuizPhase.loading:
+        return Scaffold(
+          appBar: AppBar(title: Text(widget.subjectName)),
+          body: const Center(child: CircularProgressIndicator()),
+        );
+      case QuizPhase.mapping:
+        return _buildMappingSelector();
+      case QuizPhase.difficulty:
+        return _buildDifficultySelection();
+      case QuizPhase.quiz:
+        return _buildQuizContent();
+      case QuizPhase.results:
+        return Scaffold(
+          appBar: AppBar(title: Text(widget.subjectName)),
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text("Unable to load quiz data."),
+                const SizedBox(height: 20),
+                ElevatedButton(onPressed: _loadServerData, child: const Text("Retry")),
+              ],
+            ),
+          ),
+        );
     }
+  }
 
-    final List<Question> questions = _quizData!.questions;
-    final currentQuestion = questions[currentIndex];
+  Widget _buildMappingSelector() {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Select Subject")),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Text(
+              "We couldn't find a direct quiz for '${widget.subjectName}'.\nPlease select the most relevant subject from our database:",
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+          Expanded(
+            child: ListView.separated(
+              itemCount: _availableSubjects.length,
+              separatorBuilder: (context, index) => const Divider(),
+              itemBuilder: (context, index) {
+                final s = _availableSubjects[index];
+                return ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: Colors.purple.shade50,
+                    child: Text(s['icon'] ?? '📚', style: const TextStyle(fontSize: 20)),
+                  ),
+                  title: Text(s['name'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(s['shortName'] ?? ''),
+                  onTap: () {
+                    setState(() {
+                      _actualSubjectId = s['id'];
+                      _loadServerData();
+                    });
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDifficultySelection() {
+    return Scaffold(
+      appBar: AppBar(title: Text("Difficulty - ${widget.subjectName}")),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _difficultyButton("Easy", "🟢", Colors.green, "easy"),
+            const SizedBox(height: 16),
+            _difficultyButton("Medium", "🟡", Colors.orange, "medium"),
+            const SizedBox(height: 16),
+            _difficultyButton("Hard", "🔴", Colors.red, "hard"),
+            const SizedBox(height: 16),
+            _difficultyButton("Mixed", "🎨", Colors.blue, "mixed"),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _difficultyButton(String label, String icon, Color color, String value) {
+    return SizedBox(
+      width: double.infinity,
+      height: 70,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color.withOpacity(0.1),
+          foregroundColor: color,
+          side: BorderSide(color: color.withOpacity(0.5), width: 2),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
+        onPressed: () => _startQuiz(value),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 24)),
+            const SizedBox(width: 12),
+            Text(label, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuizContent() {
+    final theme = Theme.of(context);
+    final currentQuestion = _filteredQuestions[currentIndex];
 
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.subjectName),
-        elevation: 0,
-        backgroundColor: theme.colorScheme.surface,
-        foregroundColor: theme.colorScheme.onSurface,
-      ),
-      backgroundColor: theme.colorScheme.surfaceContainer,
-      body: Column(
-        children: [
-          _buildProgressHeader(currentIndex + 1, questions.length),
-
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Concept Badge
-                  if (currentQuestion.concept != null)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        currentQuestion.concept!,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: theme.colorScheme.onPrimaryContainer,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  
-                  Text(
-                    currentQuestion.questionText,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  if (currentQuestion.code != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: HighlightView(
-                        currentQuestion.code!,
-                        language: currentQuestion.language,
-                        theme: shadesOfPurpleTheme,
-                        padding: const EdgeInsets.all(16),
-                        textStyle: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-
-                  const SizedBox(height: 25),
-
-                  if (currentQuestion.type == QuestionType.text)
-                    _buildTextInputField(currentQuestion)
-                  else
-                    ...List.generate(
-                      currentQuestion.options.length,
-                      (index) => _buildOptionTile(index, currentQuestion),
-                    ),
-
-                  const SizedBox(height: 30),
-
-                  if (isAnswered) ...[
-                    // Explanation Section
-                    if (currentQuestion.explanation != null)
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        margin: const EdgeInsets.only(bottom: 20),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.4),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: theme.colorScheme.secondary.withValues(alpha: 0.2)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              "Explanation",
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(currentQuestion.explanation!),
-                          ],
-                        ),
-                      ),
-
-                    SizedBox(
-                      width: double.infinity,
-                      height: 55,
-                      child: ElevatedButton(
-                        onPressed: _nextQuestion,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: theme.colorScheme.primary,
-                          foregroundColor: theme.colorScheme.onPrimary,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(
-                          currentIndex == questions.length - 1
-                              ? "Finish Quiz"
-                              : "Next Question",
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTextInputField(Question question) {
-    final theme = Theme.of(context);
-    final isCorrect = _textFeedback?.startsWith("Correct") ?? false;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextField(
-          controller: _textController,
-          enabled: !isAnswered,
-          maxLines: 3,
-          decoration: InputDecoration(
-            hintText: "Type your answer here...",
-            filled: true,
-            fillColor: theme.colorScheme.surface,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(6),
+          child: LinearProgressIndicator(
+            value: (currentIndex + 1) / _filteredQuestions.length,
+            backgroundColor: Colors.grey.withOpacity(0.2),
           ),
         ),
-        if (!isAnswered) ...[
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton(
-              onPressed: () => _submitTextAnswer(question),
-              child: const Text("Submit Answer"),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                if (currentQuestion.concept != null) _conceptBadge(currentQuestion.concept!),
+                const Spacer(),
+                _difficultyBadge(currentQuestion.difficulty ?? "Medium"),
+              ],
             ),
-          ),
-        ],
-        if (isAnswered && _textFeedback != null) ...[
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(12),
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: isCorrect ? Colors.green.shade50 : Colors.red.shade50,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: isCorrect ? Colors.green : Colors.red),
+            const SizedBox(height: 16),
+            Text(
+              currentQuestion.questionText,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
-            child: Text(
-              _textFeedback!,
-              style: TextStyle(
-                color: isCorrect ? Colors.green.shade900 : Colors.red.shade900,
-                fontWeight: FontWeight.bold,
+            const SizedBox(height: 20),
+            if (currentQuestion.code != null) _buildCodeView(currentQuestion.code!, currentQuestion.language),
+            const SizedBox(height: 25),
+            if (currentQuestion.type == QuestionType.text)
+              _buildTextInputField(currentQuestion)
+            else
+              ...List.generate(
+                currentQuestion.options.length,
+                (index) => _buildOptionTile(index, currentQuestion),
               ),
-            ),
-          ),
-        ],
-      ],
+            const SizedBox(height: 30),
+            if (isAnswered) _buildExplanationAndNext(currentQuestion, theme),
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _buildProgressHeader(int cur, int tot) {
-    final theme = Theme.of(context);
+  Widget _conceptBadge(String text) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      color: theme.colorScheme.surface,
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                "Question $cur of $tot",
-                style: TextStyle(
-                  color: theme.colorScheme.primary,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text("${((cur / tot) * 100).toInt()}%"),
-            ],
-          ),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(
-            value: cur / tot,
-            backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1),
-            valueColor: AlwaysStoppedAnimation<Color>(theme.colorScheme.primary),
-            borderRadius: BorderRadius.circular(10),
-          ),
-        ],
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(color: Colors.purple.shade50, borderRadius: BorderRadius.circular(20)),
+      child: Text(text, style: TextStyle(color: Colors.purple.shade700, fontSize: 12, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _difficultyBadge(String diff) {
+    Color c = Colors.orange;
+    if (diff.toLowerCase() == 'easy') c = Colors.green;
+    if (diff.toLowerCase() == 'hard') c = Colors.red;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(color: c.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+      child: Text(diff.toUpperCase(), style: TextStyle(color: c, fontSize: 10, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _buildCodeView(String code, String? language) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: HighlightView(
+        code,
+        language: language,
+        theme: shadesOfPurpleTheme,
+        padding: const EdgeInsets.all(16),
+        textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 14),
       ),
     );
   }
@@ -434,59 +461,81 @@ class _SubjectQuizState extends State<SubjectQuiz> {
     bool isSelected = index == selectedIndex;
     final theme = Theme.of(context);
 
-    Color color = theme.colorScheme.surface;
+    Color borderColor = Colors.grey.shade300;
+    Color bgColor = Colors.white;
+    
     if (isAnswered) {
-      color = isCorrect ? Colors.green.shade50 : isSelected ? Colors.red.shade50 : theme.colorScheme.surface;
+      if (isCorrect) {
+        borderColor = Colors.green;
+        bgColor = Colors.green.shade50;
+      } else if (isSelected) {
+        borderColor = Colors.red;
+        bgColor = Colors.red.shade50;
+      }
+    } else if (isSelected) {
+      borderColor = theme.colorScheme.primary;
+      bgColor = theme.colorScheme.primary.withOpacity(0.05);
     }
 
     return GestureDetector(
-      onTap: isAnswered
-          ? null
-          : () {
-              setState(() {
-                selectedIndex = index;
-                isAnswered = true;
-                if (isCorrect) score++;
-              });
-            },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+      onTap: isAnswered ? null : () => _submitMCQAnswer(index, question),
+      child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: color,
+          color: bgColor,
+          border: Border.all(color: borderColor, width: 2),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isAnswered && isCorrect
-                ? Colors.green
-                : (isSelected ? Colors.red : theme.colorScheme.outlineVariant),
-            width: 2,
-          ),
         ),
         child: Row(
           children: [
-            CircleAvatar(
-              radius: 14,
-              backgroundColor: isAnswered && isCorrect
-                  ? Colors.green
-                  : theme.colorScheme.surfaceContainerHighest,
-              child: Text(
-                String.fromCharCode(65 + index),
-                style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
-              ),
-            ),
-            const SizedBox(width: 15),
-            Expanded(
-              child: Text(
-                question.options[index],
-                style: const TextStyle(fontSize: 15),
-              ),
-            ),
-            if (isAnswered && isCorrect)
-              const Icon(Icons.check_circle, color: Colors.green),
+            Text(String.fromCharCode(65 + index), style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(width: 12),
+            Expanded(child: Text(question.options[index])),
+            if (isAnswered && isCorrect) const Icon(Icons.check_circle, color: Colors.green),
+            if (isAnswered && isSelected && !isCorrect) const Icon(Icons.cancel, color: Colors.red),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildTextInputField(Question question) {
+    return Column(
+      children: [
+        TextField(
+          controller: _textController,
+          enabled: !isAnswered,
+          decoration: const InputDecoration(border: OutlineInputBorder(), hintText: "Enter your answer"),
+        ),
+        if (!isAnswered) ...[
+          const SizedBox(height: 12),
+          ElevatedButton(onPressed: () => _submitTextAnswer(question), child: const Text("Submit")),
+        ],
+        if (isAnswered && _textFeedback != null) ...[
+          const SizedBox(height: 12),
+          Text(_textFeedback!, style: TextStyle(fontWeight: FontWeight.bold, color: _textFeedback!.startsWith("Correct") ? Colors.green : Colors.red)),
+        ]
+      ],
+    );
+  }
+
+  Widget _buildExplanationAndNext(Question question, ThemeData theme) {
+    return Column(
+      children: [
+        if (question.explanation != null)
+          Container(
+            padding: const EdgeInsets.all(16),
+            margin: const EdgeInsets.only(bottom: 20),
+            decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(12)),
+            child: Text("💡 Explanation: ${question.explanation}"),
+          ),
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton(onPressed: _nextQuestion, child: const Text("Next Question")),
+        ),
+      ],
     );
   }
 }

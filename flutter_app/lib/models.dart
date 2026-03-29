@@ -70,7 +70,7 @@ class Question {
   final String? language;
   final List<String> options;
   final int answerIndex;
-  final String? correctAnswer; 
+  final String correctAnswer; 
   final String? explanation;
   final QuestionType type;
 
@@ -83,7 +83,7 @@ class Question {
     this.language,
     required this.options,
     required this.answerIndex,
-    this.correctAnswer,
+    required this.correctAnswer,
     this.explanation,
     required this.type,
   });
@@ -128,22 +128,20 @@ class Question {
   }
 }
 
+// lib/models.dart
 class QuizData {
   final String subject;
-  final String topic;
   final List<Question> questions;
 
-  QuizData({
-    required this.subject,
-    required this.topic,
-    required this.questions,
-  });
+  QuizData({required this.subject, required this.questions});
 
   factory QuizData.fromJson(Map<String, dynamic> json) {
     return QuizData(
-      subject: json['subject'] ?? '',
-      topic: json['topic'] ?? '',
-      questions: (json['questions'] as List?)?.map((i) => Question.fromJson(i)).toList() ?? [],
+      // Handles both "section" (from Node API) and "subject" (legacy)
+      subject: json['section'] ?? json['subject'] ?? 'Unknown Subject',
+      questions: (json['questions'] as List?)
+          ?.map((i) => Question.fromJson(i))
+          .toList() ?? [],
     );
   }
 }
