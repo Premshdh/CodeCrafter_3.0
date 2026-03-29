@@ -43,6 +43,22 @@ class ApiService {
     }
   }
 
+  /// AUTH: Google Login
+  Future<Map<String, dynamic>> loginWithGoogle(String idToken) async {
+    try {
+      final response = await _dio.post('$_expressBase/auth/google', data: {
+        'token': idToken,
+      });
+      if (response.data['token'] != null) {
+        setToken(response.data['token'], response.data['user']['id']);
+      }
+      return response.data;
+    } catch (e) {
+      debugPrint('Google Login error: $e');
+      throw Exception('Google login failed: $e');
+    }
+  }
+
   /// AUTH: Register
   Future<Map<String, dynamic>> register(String name, String email, String password) async {
     try {
@@ -76,7 +92,7 @@ class ApiService {
     }
   }
 
-  /// NODE.JS: Fetches Quiz Data for a specific ID
+  /// NODE.JS: Fetches Quiz Data
   Future<QuizData> fetchQuizData(String subjectId) async {
     try {
       final response = await _dio.get('$_expressBase/quiz/subjects/$subjectId');
@@ -87,7 +103,7 @@ class ApiService {
       }
     } catch (e) {
       if (e is DioException && e.response?.statusCode == 404) {
-        throw Exception('404'); // Special case for mapping fallback
+        throw Exception('404');
       }
       debugPrint('Error (fetchQuizData): $e');
       throw Exception('Failed to connect to Node server: $e');

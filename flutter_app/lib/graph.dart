@@ -6,7 +6,14 @@ import 'package:codecrafter/models.dart';
 import 'package:codecrafter/chat_view.dart';
 
 class SubjectDependencyGraph extends StatefulWidget {
-  const SubjectDependencyGraph({super.key});
+  final String subjectName;
+  final SubjectData? initialData;
+
+  const SubjectDependencyGraph({
+    super.key, 
+    this.subjectName = "Machine Learning",
+    this.initialData,
+  });
 
   @override
   State<SubjectDependencyGraph> createState() => _SubjectDependencyGraphState();
@@ -28,7 +35,13 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
   @override
   void initState() {
     super.initState();
-    _fetchGraphData();
+    if (widget.initialData != null) {
+      _subjectData = widget.initialData;
+      _setupGraph();
+      isReady = true;
+    } else {
+      _fetchGraphData();
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _resetView());
   }
 
@@ -38,12 +51,10 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
       _errorMessage = null;
     });
     try {
-      final data = await _apiService.fetchSubjectData("Machine Learning");
-      // debugPrint('Graph Fetch Success: $data');
+      final data = await _apiService.fetchSubjectData(widget.subjectName);
       if (data.subjects.isEmpty) {
-        debugPrint('Warning: Fetched subject data is empty');
         setState(() {
-          _errorMessage = "No subjects found for this roadmap.";
+          _errorMessage = "No subjects found for '${widget.subjectName}'.";
           isReady = true;
         });
         return;
@@ -55,18 +66,11 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
         isReady = true;
       });
     } catch (e) {
-      debugPrint('Graph Fetch Error: $e');
       if (mounted) {
         setState(() {
           _errorMessage = e.toString();
           isReady = true;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading graph data: $e'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
       }
     }
   }
@@ -88,8 +92,6 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
       final toNode = nodeMap[dep.to];
       if (fromNode != null && toNode != null) {
         newGraph.addEdge(fromNode, toNode);
-      } else {
-        debugPrint('Warning: Missing node for dependency from ${dep.from} to ${dep.to}');
       }
     }
 
@@ -113,7 +115,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Learning Roadmap"),
+        title: Text("${widget.subjectName} Roadmap"),
         actions: [
           IconButton(
             onPressed: () => Navigator.push(
@@ -121,25 +123,20 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
               MaterialPageRoute(builder: (context) => const ChatView()),
             ),
             icon: const Icon(Icons.chat_bubble_outline),
-            tooltip: "Chat with AI",
           ),
           IconButton(
             onPressed: _fetchGraphData,
             icon: const Icon(Icons.refresh),
-            tooltip: "Refresh Data",
           ),
           IconButton(
             onPressed: _resetView,
             icon: const Icon(Icons.center_focus_strong),
           )
         ],
-        backgroundColor: theme.colorScheme.surface,
-        foregroundColor: theme.colorScheme.onSurface,
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _resetView,
-        backgroundColor: theme.colorScheme.primary,
-        child: Icon(Icons.fullscreen_exit, color: theme.colorScheme.onPrimary),
+        child: const Icon(Icons.fullscreen_exit),
       ),
       body: _buildBody(theme),
     );
@@ -159,21 +156,11 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
             children: [
               const Icon(Icons.error_outline, size: 60, color: Colors.red),
               const SizedBox(height: 16),
-              Text(
-                "Something went wrong",
-                style: theme.textTheme.titleLarge,
-              ),
+              Text("Error", style: theme.textTheme.titleLarge),
               const SizedBox(height: 8),
-              Text(
-                _errorMessage!,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium,
-              ),
+              Text(_errorMessage!, textAlign: TextAlign.center),
               const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _fetchGraphData,
-                child: const Text("Retry"),
-              )
+              ElevatedButton(onPressed: _fetchGraphData, child: const Text("Retry"))
             ],
           ),
         ),
@@ -181,7 +168,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
     }
 
     if (graph == null || graph!.nodes.isEmpty) {
-      return const Center(child: Text("No subjects available to display."));
+      return const Center(child: Text("No subjects available."));
     }
 
     return InteractiveViewer(
@@ -201,9 +188,7 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
             ..style = PaintingStyle.stroke,
           builder: (Node node) {
             var id = node.key!.value as String;
-            var subject = _subjectData!.subjects.firstWhere(
-                  (s) => s.id == id,
-            );
+            var subject = _subjectData!.subjects.firstWhere((s) => s.id == id);
             return GestureDetector(
               onTap: () => _showDetails(subject),
               child: _buildNodeBox(subject),
@@ -235,55 +220,25 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
               child: Column(
                 children: [
                   const SizedBox(height: 12),
-                  Container(
-                    width: 50,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
+                  Container(width: 50, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
                   Expanded(
                     child: ListView(
                       controller: scrollController,
                       padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
                       children: [
-                        Text(
-                          subject.name,
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        Text(subject.name, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 10),
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Chip(
-                            label: Text(
-                              subject.type.toUpperCase(),
-                              style: TextStyle(
-                                color: theme.colorScheme.onPrimaryContainer,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            label: Text(subject.type.toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold)),
                             backgroundColor: theme.colorScheme.primaryContainer,
-                            side: BorderSide.none,
-                            shape: const StadiumBorder(),
                           ),
                         ),
                         const SizedBox(height: 20),
-                        const Text(
-                          "Overview",
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey,
-                          ),
-                        ),
+                        const Text("Overview", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
                         const SizedBox(height: 8),
-                        Text(
-                          subject.desc,
-                          style: const TextStyle(fontSize: 16, height: 1.5),
-                        ),
+                        Text(subject.desc, style: const TextStyle(fontSize: 16, height: 1.5)),
                         const SizedBox(height: 20),
                       ],
                     ),
@@ -294,13 +249,6 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
                       width: double.infinity,
                       height: 55,
                       child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: theme.colorScheme.primary,
-                          foregroundColor: theme.colorScheme.onPrimary,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(15),
-                          ),
-                        ),
                         onPressed: () {
                           Navigator.pop(context);
                           Navigator.push(
@@ -309,20 +257,12 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
                               builder: (context) => SubjectQuiz(
                                 subjectId: subject.id,
                                 subjectName: subject.name,
-                                onComplete: () => setState(
-                                  () => completedIds.add(subject.id),
-                                ),
+                                onComplete: () => setState(() => completedIds.add(subject.id)),
                               ),
                             ),
                           );
                         },
-                        child: const Text(
-                          "Start Quiz",
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        child: const Text("Start Quiz", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ),
@@ -344,25 +284,12 @@ class _SubjectDependencyGraphState extends State<SubjectDependencyGraph> {
       decoration: BoxDecoration(
         color: isDone ? Colors.green[50] : theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isDone ? Colors.green : theme.colorScheme.primary,
-          width: 2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: isDone ? Colors.green : theme.colorScheme.primary, width: 2),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            subject.name,
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
+          Text(subject.name, style: const TextStyle(fontWeight: FontWeight.bold)),
           if (isDone) ...[
             const SizedBox(width: 8),
             const Icon(Icons.check_circle, color: Colors.green, size: 18),
