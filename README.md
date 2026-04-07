@@ -1,1 +1,1 @@
-Web Url: [http://web-frontend.sourishkanna.me](http://web-frontend.sourishkanna.me)
+Web Url: [http://codecrafter.sourishkanna.me](http://codecrafter.sourishkanna.me)
